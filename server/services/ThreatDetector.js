@@ -62,8 +62,8 @@ class ThreatDetector extends EventEmitter {
         
         // Convert to simple format
         data = dbData.map(item => ({
-          features: item.features,
-          label: item.label
+          features: item.processed_features,
+          label: item.threat_type
         }));
         console.log('Sample database format:', JSON.stringify(data[0], null, 2));
       }
@@ -319,6 +319,38 @@ class ThreatDetector extends EventEmitter {
         threat: null
       };
     }
+  }
+
+  // Extract features from CSV row data
+  extractFeaturesFromCSVData(csvRow) {
+    console.log('Extracting features from CSV row:', csvRow);
+    
+    // Convert raw CSV data to numerical features for ML
+    const features = [
+      csvRow.packet_size || 0,                                    // features_0: packet size
+      csvRow.source_port || 0,                                    // features_1: source port
+      csvRow.dest_port || 0,                                      // features_2: dest port
+      this.getProtocolNumber(csvRow.protocol),                    // features_3: protocol number
+      this.getTimeFeatures(new Date()),                           // features_4: hour (current time for CSV)
+      this.getPortCategoryFeature(csvRow.dest_port),              // features_5: port category
+      this.getPacketSizeCategory(csvRow.packet_size),             // features_6: size category
+      this.getIPTypeFromString(csvRow.source_ip),                 // features_7: source IP type
+      this.getIPTypeFromString(csvRow.dest_ip)                    // features_8: dest IP type
+    ];
+    
+    console.log('Extracted features:', features);
+    return features;
+  }
+
+  getIPTypeFromString(ip) {
+    if (!ip) return 0;
+    // Check if IP is private (192.168.x.x, 10.x.x.x, 172.16-31.x.x)
+    if (ip.startsWith('192.168.') || 
+        ip.startsWith('10.') || 
+        /^172\.(1[6-9]|2[0-9]|3[0-1])\./.test(ip)) {
+      return 1; // Private
+    }
+    return 2; // Public
   }
 
   extractFeatures(packet) {

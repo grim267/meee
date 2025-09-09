@@ -4,8 +4,15 @@ const { v4: uuidv4 } = require('uuid');
 class TrainingData {
   constructor(data) {
     this.id = data.id || uuidv4();
-    this.features = data.features;
-    this.label = data.label;
+    this.source_ip = data.source_ip;
+    this.dest_ip = data.dest_ip;
+    this.source_port = data.source_port;
+    this.dest_port = data.dest_port;
+    this.protocol = data.protocol;
+    this.packet_size = data.packet_size;
+    this.duration = data.duration || 0;
+    this.threat_type = data.threat_type;
+    this.processed_features = data.processed_features || data.features;
     this.source = data.source || 'manual';
     this.validated = data.validated || false;
     this.created_at = data.created_at || data.createdAt;
@@ -16,8 +23,15 @@ class TrainingData {
   toDatabase() {
     return {
       id: this.id,
-      features: this.features,
-      label: this.label,
+      source_ip: this.source_ip,
+      dest_ip: this.dest_ip,
+      source_port: this.source_port,
+      dest_port: this.dest_port,
+      protocol: this.protocol,
+      packet_size: this.packet_size,
+      duration: this.duration,
+      threat_type: this.threat_type,
+      processed_features: this.processed_features,
       source: this.source,
       validated: this.validated
     };
@@ -27,8 +41,15 @@ class TrainingData {
   toAPI() {
     return {
       id: this.id,
-      features: this.features,
-      label: this.label,
+      sourceIp: this.source_ip,
+      destIp: this.dest_ip,
+      sourcePort: this.source_port,
+      destPort: this.dest_port,
+      protocol: this.protocol,
+      packetSize: this.packet_size,
+      duration: this.duration,
+      threatType: this.threat_type,
+      processedFeatures: this.processed_features,
       source: this.source,
       validated: this.validated,
       createdAt: this.created_at,
@@ -122,19 +143,19 @@ class TrainingData {
     }
   }
 
-  static async findByLabel(label) {
+  static async findByThreatType(threatType) {
     try {
       const { data, error } = await supabase
         .from('training_data')
         .select('*')
-        .eq('label', label)
+        .eq('threat_type', threatType)
         .order('created_at', { ascending: false });
       
       if (error) throw error;
       
       return data.map(trainingData => new TrainingData(trainingData));
     } catch (error) {
-      console.error('Error finding training data by label:', error);
+      console.error('Error finding training data by threat type:', error);
       throw error;
     }
   }

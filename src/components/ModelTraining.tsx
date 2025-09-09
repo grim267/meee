@@ -161,15 +161,20 @@ export const ModelTraining: React.FC = () => {
               <div className="text-sm text-gray-300 space-y-2">
                 <p>Your CSV file should contain the following columns:</p>
                 <ul className="list-disc list-inside space-y-1 ml-4">
-                  <li><code className="bg-gray-600 px-1 rounded">source_ip</code> - Source IP address</li>
-                  <li><code className="bg-gray-600 px-1 rounded">dest_ip</code> - Destination IP address</li>
-                  <li><code className="bg-gray-600 px-1 rounded">source_port</code> - Source port number</li>
-                  <li><code className="bg-gray-600 px-1 rounded">dest_port</code> - Destination port number</li>
+                  <li><code className="bg-gray-600 px-1 rounded">source_ip</code> - Source IP address (e.g., 192.168.1.100)</li>
+                  <li><code className="bg-gray-600 px-1 rounded">dest_ip</code> - Destination IP address (e.g., 8.8.8.8)</li>
+                  <li><code className="bg-gray-600 px-1 rounded">source_port</code> - Source port number (1-65535)</li>
+                  <li><code className="bg-gray-600 px-1 rounded">dest_port</code> - Destination port number (1-65535)</li>
                   <li><code className="bg-gray-600 px-1 rounded">protocol</code> - Network protocol (TCP/UDP/ICMP)</li>
-                  <li><code className="bg-gray-600 px-1 rounded">packet_size</code> - Size of the packet</li>
-                  <li><code className="bg-gray-600 px-1 rounded">duration</code> - Connection duration</li>
-                  <li><code className="bg-gray-600 px-1 rounded">threat_type</code> - Type of threat (Malware, DDoS, Intrusion, Phishing, Normal)</li>
+                  <li><code className="bg-gray-600 px-1 rounded">packet_size</code> - Size of the packet in bytes</li>
+                  <li><code className="bg-gray-600 px-1 rounded">duration</code> - Connection duration in seconds</li>
+                  <li><code className="bg-gray-600 px-1 rounded">threat_type</code> - Type of threat (Normal, Malware, DDoS, Intrusion, Phishing, Port_Scan, Brute_Force)</li>
                 </ul>
+                <div className="mt-3 p-2 bg-blue-500/20 rounded">
+                  <p className="text-blue-300 text-xs">
+                    <strong>Note:</strong> The system will automatically extract 9 numerical features from this data for machine learning.
+                  </p>
+                </div>
               </div>
             </div>
 

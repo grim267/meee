@@ -249,21 +249,19 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
       const dataRows = lines.slice(1);
       console.log('Data rows to process:', dataRows.length);
       
-      // Check if headers match expected format
-      const expectedFeatureHeaders = ['features_0', 'features_1', 'features_2', 'features_3', 'features_4', 'features_5', 'features_6', 'features_7', 'features_8'];
-      const hasFeatureHeaders = expectedFeatureHeaders.every(header => headers.includes(header));
-      const hasLabelHeader = headers.includes('label');
+      // Check if headers match new CSV format
+      const expectedHeaders = ['source_ip', 'dest_ip', 'source_port', 'dest_port', 'protocol', 'packet_size', 'duration', 'threat_type'];
+      const hasRequiredHeaders = expectedHeaders.every(header => headers.includes(header));
       
-      console.log('Has feature headers:', hasFeatureHeaders);
-      console.log('Has label header:', hasLabelHeader);
+      console.log('Has required headers:', hasRequiredHeaders);
       
-      if (!hasFeatureHeaders || !hasLabelHeader) {
-        console.log('Headers do not match expected format. Expected: features_0 through features_8 and label');
+      if (!hasRequiredHeaders) {
+        console.log('Headers do not match expected format.');
         console.log('Found headers:', headers);
         return res.status(400).json({ 
-          error: 'Invalid CSV format. Expected headers: features_0, features_1, ..., features_8, label',
+          error: 'Invalid CSV format. Expected headers: source_ip, dest_ip, source_port, dest_port, protocol, packet_size, duration, threat_type',
           foundHeaders: headers,
-          expectedHeaders: [...expectedFeatureHeaders, 'label']
+          expectedHeaders: expectedHeaders
         });
       }
       
@@ -276,38 +274,29 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
         if (i < 5) console.log(`Processing row ${i + 1}:`, values);
         
         if (values.length === headers.length) {
-          let features, label;
+          // Parse CSV row into structured data
+          const csvRow = {};
+          headers.forEach((header, index) => {
+            csvRow[header] = values[index];
+          });
           
-          if (hasFeatureHeaders && hasLabelHeader) {
-            // New format with feature_0, feature_1, etc.
-            features = [];
-            for (let j = 0; j < 9; j++) {
-              const featureIndex = headers.indexOf(`features_${j}`);
-              if (featureIndex !== -1) {
-                const num = parseFloat(values[featureIndex]);
-                if (isNaN(num)) {
-                  console.warn(`Row ${i + 1}: Invalid number for features_${j}:`, values[featureIndex]);
-                  features.push(0);
-                } else {
-                  features.push(num);
-                }
-              } else {
-                console.warn(`Row ${i + 1}: Missing features_${j}, using 0`);
-                features.push(0);
-              }
-            }
-            const labelIndex = headers.indexOf('label');
-            label = labelIndex !== -1 ? values[labelIndex] : 'Normal';
-          } else {
-            // Legacy format - assume features are first 9 columns, label is last
-            features = values.slice(0, -1).map(v => {
-              const num = parseFloat(v);
-              return isNaN(num) ? 0 : num;
-            });
-            label = values[values.length - 1];
-          }
+          // Validate and convert data types
+          const processedRow = {
+            source_ip: csvRow.source_ip,
+            dest_ip: csvRow.dest_ip,
+            source_port: parseInt(csvRow.source_port) || 0,
+            dest_port: parseInt(csvRow.dest_port) || 0,
+            protocol: csvRow.protocol?.toUpperCase(),
+            packet_size: parseInt(csvRow.packet_size) || 0,
+            duration: parseFloat(csvRow.duration) || 0,
+            threat_type: csvRow.threat_type
+          };
           
-          if (i < 5) console.log(`Row ${i + 1} - Features:`, features, 'Label:', label);
+          if (i < 5) console.log(`Row ${i + 1} processed:`, processedRow);
+          
+          // Extract ML features from CSV data
+          const features = threatDetector.extractFeaturesFromCSVData(processedRow);
+          const label = processedRow.threat_type;
           
           // Validate features
           if (features.length !== 9) {
@@ -318,15 +307,21 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
           // Validate label
           const validLabels = ['Normal', 'Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force'];
           if (!validLabels.includes(label)) {
-            console.warn(`Row ${i + 1} has invalid label:`, label);
+            console.warn(`Row ${i + 1} has invalid threat_type:`, label);
+            continue;
+          }
+          
+          // Validate required fields
+          if (!processedRow.source_ip || !processedRow.dest_ip || processedRow.packet_size <= 0) {
+            console.warn(`Row ${i + 1} missing required fields`);
             continue;
           }
           
           // Save to database
           try {
             const trainingRecord = new TrainingData({
-              features,
-              label,
+              ...processedRow,
+              processed_features: features,
               source: 'csv'
             });
             
