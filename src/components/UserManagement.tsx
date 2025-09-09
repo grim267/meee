@@ -49,7 +49,9 @@ export const UserManagement: React.FC = () => {
       console.log('User creation result:', result);
       
       if (!result.success) {
-        alert('Failed to create user: ' + (result.error || 'Unknown error'));
+        const errorMsg = result.error || 'Unknown error';
+        const details = result.details ? `\nDetails: ${result.details}` : '';
+        alert(`Failed to create user: ${errorMsg}${details}`);
         return;
       }
       
@@ -57,7 +59,7 @@ export const UserManagement: React.FC = () => {
       loadUsers();
     } catch (error) {
       console.error('Failed to add user:', error);
-      alert('Failed to add user: ' + error.message);
+      alert('Failed to add user: ' + (error.message || 'Network error'));
     }
   };
 
@@ -68,7 +70,9 @@ export const UserManagement: React.FC = () => {
       console.log('User update result:', result);
       
       if (!result.success) {
-        alert('Failed to update user: ' + (result.error || 'Unknown error'));
+        const errorMsg = result.error || 'Unknown error';
+        const details = result.details ? `\nDetails: ${result.details}` : '';
+        alert(`Failed to update user: ${errorMsg}${details}`);
         return;
       }
       
@@ -76,7 +80,7 @@ export const UserManagement: React.FC = () => {
       loadUsers();
     } catch (error) {
       console.error('Failed to update user:', error);
-      alert('Failed to update user: ' + error.message);
+      alert('Failed to update user: ' + (error.message || 'Network error'));
     }
   };
 
@@ -88,14 +92,16 @@ export const UserManagement: React.FC = () => {
         console.log('User deletion result:', result);
         
         if (!result.success) {
-          alert('Failed to delete user: ' + (result.error || 'Unknown error'));
+          const errorMsg = result.error || 'Unknown error';
+          const details = result.details ? `\nDetails: ${result.details}` : '';
+          alert(`Failed to delete user: ${errorMsg}${details}`);
           return;
         }
         
         loadUsers();
       } catch (error) {
         console.error('Failed to delete user:', error);
-        alert('Failed to delete user: ' + error.message);
+        alert('Failed to delete user: ' + (error.message || 'Network error'));
       }
     }
   };

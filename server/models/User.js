@@ -4,21 +4,26 @@ const { v4: uuidv4 } = require('uuid');
 class User {
   constructor(data) {
     this.id = data.id || uuidv4();
-    this.email = data.email;
-    this.name = data.name;
+    this.email = data.email || '';
+    this.full_name = data.full_name || data.name || '';
+    this.username = data.username || data.email || '';
     this.role = data.role || 'viewer';
-    this.alert_preferences = data.alert_preferences || data.alertPreferences || {
+    this.role_level = data.role_level || 4;
+    this.password_hash = data.password_hash || '';
+    this.alert_preferences = data.alert_preferences || data.alertPreferences || JSON.stringify({
       emailEnabled: true,
       severityLevels: ['Critical', 'High'],
       threatTypes: ['Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force'],
       immediateAlert: true,
       dailySummary: true,
       weeklySummary: false
-    };
+    });
     this.is_active = data.is_active !== undefined ? data.is_active : (data.isActive !== undefined ? data.isActive : true);
     this.last_login = data.last_login || data.lastLogin;
     this.created_at = data.created_at || data.createdAt;
     this.updated_at = data.updated_at || data.updatedAt;
+    this.failed_login_attempts = data.failed_login_attempts || 0;
+    this.account_locked_until = data.account_locked_until;
   }
 
   // Convert to database format
@@ -26,22 +31,42 @@ class User {
     return {
       id: this.id,
       email: this.email,
-      name: this.name,
+      full_name: this.full_name,
+      username: this.username,
       role: this.role,
-      alert_preferences: this.alert_preferences,
+      role_level: this.role_level,
+      password_hash: this.password_hash,
       is_active: this.is_active,
-      last_login: this.last_login
+      last_login: this.last_login,
+      failed_login_attempts: this.failed_login_attempts,
+      account_locked_until: this.account_locked_until
     };
   }
 
   // Convert to API format (camelCase)
   toAPI() {
+    let alertPreferences;
+    try {
+      alertPreferences = typeof this.alert_preferences === 'string' 
+        ? JSON.parse(this.alert_preferences) 
+        : this.alert_preferences;
+    } catch (e) {
+      alertPreferences = {
+        emailEnabled: true,
+        severityLevels: ['Critical', 'High'],
+        threatTypes: ['Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force'],
+        immediateAlert: true,
+        dailySummary: true,
+        weeklySummary: false
+      };
+    }
+
     return {
       id: this.id,
       email: this.email,
-      name: this.name,
+      name: this.full_name,
       role: this.role,
-      alertPreferences: this.alert_preferences,
+      alertPreferences: alertPreferences,
       isActive: this.is_active,
       lastLogin: this.last_login,
       createdAt: this.created_at,
@@ -53,6 +78,7 @@ class User {
   async save() {
     try {
       const userData = this.toDatabase();
+      console.log('Saving user data to database:', userData);
       
       if (this.created_at) {
         // Update existing user
@@ -63,7 +89,10 @@ class User {
           .select()
           .single();
         
-        if (error) throw error;
+        if (error) {
+          console.error('Error updating user:', error);
+          throw error;
+        }
         
         // Update instance with returned data
         Object.assign(this, data);
@@ -76,8 +105,12 @@ class User {
           .select()
           .single();
         
-        if (error) throw error;
+        if (error) {
+          console.error('Error creating user:', error);
+          throw error;
+        }
         
+        console.log('User created successfully:', data);
         // Update instance with returned data
         Object.assign(this, data);
         return this;

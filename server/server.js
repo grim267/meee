@@ -414,37 +414,56 @@ app.get('/api/users', async (req, res) => {
 app.post('/api/users', async (req, res) => {
   try {
     console.log('Creating user with data:', req.body);
-    const { email, name, role, alertPreferences } = req.body;
+    const { email, name, role, alertPreferences, isActive } = req.body;
     
     if (!email || !name) {
       return res.status(400).json({ error: 'Email and name are required' });
     }
     
+    // Check if user already exists
     const existingUser = await User.findByEmail(email);
     if (existingUser) {
       return res.status(400).json({ error: 'User with this email already exists' });
     }
     
+    // Map role to database format
+    const roleMapping = {
+      'admin': 'security_admin',
+      'security_analyst': 'security_analyst', 
+      'it_manager': 'security_manager',
+      'viewer': 'security_viewer'
+    };
+    
+    const dbRole = roleMapping[role] || 'security_viewer';
+    
     const user = new User({
       email,
-      name,
-      role: role || 'viewer',
-      alert_preferences: alertPreferences || {
+      full_name: name,
+      username: email,
+      role: dbRole,
+      is_active: isActive !== undefined ? isActive : true,
+      alert_preferences: JSON.stringify(alertPreferences || {
         emailEnabled: true,
         severityLevels: ['Critical', 'High'],
         threatTypes: ['Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force'],
         immediateAlert: true,
         dailySummary: true,
         weeklySummary: false
-      }
+      })
     });
+    
+    console.log('User object created:', user.toDatabase());
     
     const savedUser = await user.save();
     console.log('User created successfully:', savedUser.id);
     res.json({ success: true, user: savedUser.toAPI() });
   } catch (error) {
     console.error('Error creating user:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      details: error.details || error.hint || 'Unknown database error'
+    });
   }
 });
 
@@ -458,10 +477,18 @@ app.put('/api/users/:id', async (req, res) => {
       return res.status(404).json({ error: 'User not found' });
     }
     
+    // Map role to database format
+    const roleMapping = {
+      'admin': 'security_admin',
+      'security_analyst': 'security_analyst',
+      'it_manager': 'security_manager', 
+      'viewer': 'security_viewer'
+    };
+    
     const updates = {};
-    if (name) updates.name = name;
-    if (role) updates.role = role;
-    if (alertPreferences) updates.alertPreferences = alertPreferences;
+    if (name) updates.full_name = name;
+    if (role) updates.role = roleMapping[role] || role;
+    if (alertPreferences) updates.alert_preferences = JSON.stringify(alertPreferences);
     if (typeof isActive === 'boolean') updates.isActive = isActive;
     
     const updatedUser = await user.update(updates);
@@ -470,7 +497,11 @@ app.put('/api/users/:id', async (req, res) => {
     res.json({ success: true, user: updatedUser.toAPI() });
   } catch (error) {
     console.error('Error updating user:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ 
+      success: false, 
+      error: error.message,
+      details: error.details || error.hint || 'Unknown database error'
+    });
   }
 });
 
