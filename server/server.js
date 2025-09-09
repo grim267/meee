@@ -220,6 +220,55 @@ app.post('/api/alerts/:id/acknowledge', async (req, res) => {
   }
 });
 
+// Model information route
+app.get('/api/model/info', async (req, res) => {
+  try {
+    const modelInfo = threatDetector.getModelInfo();
+    const trainingDataCount = await TrainingData.countAll();
+    
+    res.json({
+      ...modelInfo,
+      trainingDataCount,
+      isReady: modelInfo.isModelLoaded && modelInfo.isScalerLoaded
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Incremental training route
+app.post('/api/model/retrain', async (req, res) => {
+  try {
+    if (systemStatus.isTraining) {
+      return res.status(400).json({ error: 'Model is already training' });
+    }
+    
+    console.log('Starting incremental retraining with latest data...');
+    
+    // Get all training data including new detections
+    const allTrainingData = await TrainingData.findAll();
+    
+    if (allTrainingData.length < 10) {
+      return res.status(400).json({ 
+        error: `Insufficient training data for retraining. Need at least 10 samples, found ${allTrainingData.length}.` 
+      });
+    }
+    
+    // Convert to training format
+    const trainingData = allTrainingData.map(item => ({
+      features: item.processed_features,
+      label: item.threat_type
+    }));
+    
+    const result = await threatDetector.trainModel(trainingData);
+    res.json(result);
+    
+  } catch (error) {
+    console.error('Retraining error:', error);
+    res.status(500).json({ error: 'Retraining failed: ' + error.message });
+  }
+});
+
 app.post('/api/model/train', upload.single('file'), async (req, res) => {
   if (systemStatus.isTraining) {
     return res.status(400).json({ error: 'Model is already training' });

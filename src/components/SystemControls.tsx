@@ -1,5 +1,5 @@
 import React from 'react';
-import { Play, Square, Settings, Shield, Activity, RefreshCw } from 'lucide-react';
+import { Play, Square, Settings, Shield, Activity, RefreshCw, Brain } from 'lucide-react';
 import { SystemStatus } from '../types';
 import { api } from '../services/api';
 
