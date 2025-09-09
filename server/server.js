@@ -226,48 +226,93 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
   }
 
   try {
+    console.log('Starting model training...');
     let trainingData = [];
 
     if (req.file) {
+      console.log('Processing uploaded CSV file:', req.file.filename);
       // Process uploaded CSV file
       const csvData = fs.readFileSync(req.file.path, 'utf8');
+      console.log('CSV file size:', csvData.length, 'bytes');
+      
       const lines = csvData.split('\n').filter(line => line.trim() !== '');
+      console.log('CSV lines found:', lines.length);
       
       if (lines.length < 2) {
         return res.status(400).json({ error: 'CSV file must contain header and at least one data row' });
       }
 
       const headers = lines[0].split(',').map(h => h.trim());
+      console.log('CSV headers:', headers);
       const dataRows = lines.slice(1);
+      console.log('Data rows to process:', dataRows.length);
       
-      for (const row of dataRows) {
+      for (let i = 0; i < dataRows.length; i++) {
+        const row = dataRows[i];
+        if (!row.trim()) continue; // Skip empty rows
+        
         const values = row.split(',').map(v => v.trim());
+        console.log(`Processing row ${i + 1}:`, values);
+        
         if (values.length === headers.length) {
-          const features = values.slice(0, -1).map(v => parseFloat(v) || 0);
+          const features = values.slice(0, -1).map(v => {
+            const num = parseFloat(v);
+            return isNaN(num) ? 0 : num;
+          });
           const label = values[values.length - 1];
           
-          // Save to database
-          const trainingRecord = new TrainingData({
-            features,
-            label,
-            source: 'csv'
-          });
+          console.log(`Row ${i + 1} - Features:`, features, 'Label:', label);
           
-          await trainingRecord.save();
+          // Validate features
+          if (features.length !== 9) {
+            console.warn(`Row ${i + 1} has wrong number of features:`, features.length);
+            continue;
+          }
+          
+          // Validate label
+          const validLabels = ['Normal', 'Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force'];
+          if (!validLabels.includes(label)) {
+            console.warn(`Row ${i + 1} has invalid label:`, label);
+            continue;
+          }
+          
+          // Save to database
+          try {
+            const trainingRecord = new TrainingData({
+              features,
+              label,
+              source: 'csv'
+            });
+            
+            await trainingRecord.save();
+            console.log(`Saved training record ${i + 1} to database`);
+          } catch (dbError) {
+            console.error(`Error saving training record ${i + 1}:`, dbError);
+          }
+          
           trainingData.push({ features, label });
+        } else {
+          console.warn(`Row ${i + 1} has wrong number of columns:`, values.length, 'expected:', headers.length);
         }
       }
 
+      console.log('Total training samples processed:', trainingData.length);
+      
       // Clean up uploaded file
       fs.unlinkSync(req.file.path);
+    } else {
+      console.log('No file uploaded, using existing database data');
     }
 
     // Start training
+    console.log('Starting model training with', trainingData.length, 'samples');
     const result = await threatDetector.trainModel(trainingData.length > 0 ? trainingData : null);
+    console.log('Training completed:', result);
     res.json(result);
 
   } catch (error) {
     console.error('Training error:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ error: 'Training failed: ' + error.message });
   }
 });

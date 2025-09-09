@@ -39,6 +39,7 @@ class TrainingData {
   // Save training data to database
   async save() {
     try {
+      console.log('Saving training data:', this.id, this.label);
       const trainingData = this.toDatabase();
       
       if (this.created_at) {
@@ -50,10 +51,14 @@ class TrainingData {
           .select()
           .single();
         
-        if (error) throw error;
+        if (error) {
+          console.error('Error updating training data:', error);
+          throw error;
+        }
         
         // Update instance with returned data
         Object.assign(this, data);
+        console.log('Training data updated successfully');
         return this;
       } else {
         // Create new training data
@@ -63,10 +68,14 @@ class TrainingData {
           .select()
           .single();
         
-        if (error) throw error;
+        if (error) {
+          console.error('Error creating training data:', error);
+          throw error;
+        }
         
         // Update instance with returned data
         Object.assign(this, data);
+        console.log('Training data created successfully');
         return this;
       }
     } catch (error) {

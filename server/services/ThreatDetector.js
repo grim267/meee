@@ -45,16 +45,26 @@ class ThreatDetector extends EventEmitter {
     this.emit('training_started');
 
     try {
+      console.log('ThreatDetector: Starting training process');
       let data;
       if (trainingData) {
+        console.log('Using provided training data:', trainingData.length, 'samples');
         data = trainingData;
       } else {
+        console.log('Loading training data from database');
         // Load training data from database
         data = await TrainingData.find({}).lean();
+        console.log('Loaded from database:', data.length, 'samples');
+        
+        // Convert to simple format
+        data = data.map(item => ({
+          features: item.features,
+          label: item.label
+        }));
       }
 
       if (data.length < 10) {
-        throw new Error('Insufficient training data. Need at least 10 samples.');
+        throw new Error(`Insufficient training data. Need at least 10 samples, got ${data.length}.`);
       }
 
       console.log(`Training model with ${data.length} samples`);
@@ -62,44 +72,71 @@ class ThreatDetector extends EventEmitter {
       // Prepare features and labels
       const features = data.map(item => item.features);
       const labels = data.map(item => this.labelEncoder.get(item.label) || 0);
+      
+      console.log('Features shape:', features.length, 'x', features[0]?.length);
+      console.log('Labels:', labels);
+      
+      // Validate features
+      const invalidFeatures = features.filter(f => !Array.isArray(f) || f.length !== 9);
+      if (invalidFeatures.length > 0) {
+        throw new Error(`Invalid features found. Expected 9 features per sample, found samples with different lengths.`);
+      }
+      
+      // Validate labels
+      const invalidLabels = labels.filter(l => l === undefined || l === null);
+      if (invalidLabels.length > 0) {
+        throw new Error(`Invalid labels found. Some labels could not be encoded.`);
+      }
 
       // Normalize features
+      console.log('Creating feature tensor...');
       const featureTensor = tf.tensor2d(features);
+      console.log('Feature tensor shape:', featureTensor.shape);
+      
       const { normalizedFeatures, scaler } = this.normalizeFeatures(featureTensor);
       this.featureScaler = scaler;
+      console.log('Features normalized');
 
       // Convert labels to categorical
+      console.log('Creating label tensor...');
       const labelTensor = tf.oneHot(tf.tensor1d(labels, 'int32'), this.labelEncoder.size / 2);
+      console.log('Label tensor shape:', labelTensor.shape);
 
       // Create model architecture
+      console.log('Creating model architecture...');
       this.model = tf.sequential({
         layers: [
-          tf.layers.dense({ inputShape: [features[0].length], units: 128, activation: 'relu' }),
-          tf.layers.dropout({ rate: 0.3 }),
-          tf.layers.dense({ units: 64, activation: 'relu' }),
+          tf.layers.dense({ inputShape: [9], units: 64, activation: 'relu' }),
           tf.layers.dropout({ rate: 0.3 }),
           tf.layers.dense({ units: 32, activation: 'relu' }),
+          tf.layers.dropout({ rate: 0.2 }),
           tf.layers.dense({ units: this.labelEncoder.size / 2, activation: 'softmax' })
         ]
       });
+      console.log('Model created');
 
       // Compile model
+      console.log('Compiling model...');
       this.model.compile({
         optimizer: tf.train.adam(0.001),
         loss: 'categoricalCrossentropy',
         metrics: ['accuracy']
       });
+      console.log('Model compiled');
 
       // Train model
+      console.log('Starting model training...');
       const history = await this.model.fit(normalizedFeatures, labelTensor, {
-        epochs: 50,
-        batchSize: 32,
+        epochs: 30,
+        batchSize: Math.min(16, Math.floor(data.length / 4)),
         validationSplit: 0.2,
+        verbose: 1,
         callbacks: {
           onEpochEnd: (epoch, logs) => {
+            console.log(`Epoch ${epoch + 1}/30 - loss: ${logs.loss.toFixed(4)}, accuracy: ${logs.acc.toFixed(4)}`);
             this.emit('training_progress', {
               epoch: epoch + 1,
-              totalEpochs: 50,
+              totalEpochs: 30,
               loss: logs.loss,
               accuracy: logs.acc,
               valLoss: logs.val_loss,
@@ -108,9 +145,16 @@ class ThreatDetector extends EventEmitter {
           }
         }
       });
+      console.log('Training completed');
 
       // Save model
+      console.log('Saving model...');
+      const modelDir = './models/threat_model';
+      if (!fs.existsSync('./models')) {
+        fs.mkdirSync('./models', { recursive: true });
+      }
       await this.model.save('file://./models/threat_model');
+      console.log('Model saved');
 
       const finalAccuracy = history.history.val_acc[history.history.val_acc.length - 1];
       
@@ -118,7 +162,7 @@ class ThreatDetector extends EventEmitter {
         success: true,
         samplesProcessed: data.length,
         accuracy: (finalAccuracy * 100).toFixed(2),
-        epochs: 50
+        epochs: 30
       });
 
       // Cleanup tensors
@@ -130,11 +174,12 @@ class ThreatDetector extends EventEmitter {
         success: true,
         samplesProcessed: data.length,
         accuracy: (finalAccuracy * 100).toFixed(2),
-        epochs: 50
+        epochs: 30
       };
 
     } catch (error) {
       console.error('Training failed:', error);
+      console.error('Error stack:', error.stack);
       this.emit('training_failed', { error: error.message });
       throw error;
     } finally {
