@@ -4,7 +4,8 @@ import { AlertPanel } from './AlertPanel';
 import { ModelTraining } from './ModelTraining';
 import { SystemControls } from './SystemControls';
 import { NetworkMetrics } from './NetworkMetrics';
-import { Shield, Activity, Bell, Brain, Settings } from 'lucide-react';
+import { UserManagement } from './UserManagement';
+import { Shield, Activity, Bell, Brain, Settings, Users } from 'lucide-react';
 import { useWebSocket } from '../hooks/useWebSocket';
 import { api } from '../services/api';
 import { Threat, Alert, SystemStatus } from '../types';
@@ -78,7 +79,8 @@ export const Dashboard: React.FC = () => {
     { id: 'metrics', label: 'Network Metrics', icon: Activity },
     { id: 'alerts', label: 'Alerts', icon: Bell },
     { id: 'model', label: 'ML Model', icon: Brain },
-    { id: 'controls', label: 'System Controls', icon: Settings }
+    { id: 'controls', label: 'System Controls', icon: Settings },
+    { id: 'users', label: 'User Management', icon: Users }
   ];
 
   return (
@@ -154,6 +156,7 @@ export const Dashboard: React.FC = () => {
         {activeTab === 'alerts' && <AlertPanel alerts={alerts} onAcknowledge={loadAlerts} />}
         {activeTab === 'model' && <ModelTraining />}
         {activeTab === 'controls' && <SystemControls systemStatus={systemStatus} onStatusChange={loadSystemStatus} />}
+        {activeTab === 'users' && <UserManagement />}
       </div>
     </div>
   );

@@ -70,5 +70,55 @@ export const api = {
   getNetworkMetrics: async () => {
     const response = await fetch(`${API_BASE}/metrics/network`);
     return response.json();
+  },
+
+  // User Management
+  getUsers: async () => {
+    const response = await fetch(`${API_BASE}/users`);
+    return response.json();
+  },
+
+  createUser: async (userData: any) => {
+    const response = await fetch(`${API_BASE}/users`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(userData),
+    });
+    return response.json();
+  },
+
+  updateUser: async (userId: string, userData: any) => {
+    const response = await fetch(`${API_BASE}/users/${userId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(userData),
+    });
+    return response.json();
+  },
+
+  deleteUser: async (userId: string) => {
+    const response = await fetch(`${API_BASE}/users/${userId}`, {
+      method: 'DELETE',
+    });
+    return response.json();
+  },
+
+  // Email Testing
+  testEmail: async () => {
+    const response = await fetch(`${API_BASE}/email/test`, {
+      method: 'POST',
+    });
+    return response.json();
+  },
+
+  sendTestThreatAlert: async () => {
+    const response = await fetch(`${API_BASE}/email/send-test-threat`, {
+      method: 'POST',
+    });
+    return response.json();
   }
 };

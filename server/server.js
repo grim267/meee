@@ -17,6 +17,7 @@ const EmailService = require('./services/EmailService');
 const Threat = require('./models/Threat');
 const Alert = require('./models/Alert');
 const TrainingData = require('./models/TrainingData');
+const User = require('./models/User');
 
 const app = express();
 const server = http.createServer(app);
@@ -406,6 +407,123 @@ app.post('/api/training-data', async (req, res) => {
   }
 });
 
+// User management routes
+app.get('/api/users', async (req, res) => {
+  try {
+    const users = await User.find({})
+      .select('-__v')
+      .sort({ createdAt: -1 })
+      .lean();
+    
+    res.json(users);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/users', async (req, res) => {
+  try {
+    const { email, name, role, alertPreferences } = req.body;
+    
+    if (!email || !name) {
+      return res.status(400).json({ error: 'Email and name are required' });
+    }
+    
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ error: 'User with this email already exists' });
+    }
+    
+    const user = new User({
+      id: require('uuid').v4(),
+      email,
+      name,
+      role: role || 'viewer',
+      alertPreferences: alertPreferences || {}
+    });
+    
+    await user.save();
+    res.json({ success: true, user });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/users/:id', async (req, res) => {
+  try {
+    const { name, role, alertPreferences, isActive } = req.body;
+    
+    const user = await User.findOne({ id: req.params.id });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    if (name) user.name = name;
+    if (role) user.role = role;
+    if (alertPreferences) user.alertPreferences = { ...user.alertPreferences, ...alertPreferences };
+    if (typeof isActive === 'boolean') user.isActive = isActive;
+    
+    user.updatedAt = new Date();
+    await user.save();
+    
+    res.json({ success: true, user });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/users/:id', async (req, res) => {
+  try {
+    const user = await User.findOne({ id: req.params.id });
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    
+    await User.deleteOne({ id: req.params.id });
+    res.json({ success: true, message: 'User deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Email configuration and testing routes
+app.post('/api/email/test', async (req, res) => {
+  try {
+    const result = await emailService.testEmailConfiguration();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/email/send-test-threat', async (req, res) => {
+  try {
+    // Create a mock threat for testing
+    const mockThreat = {
+      id: require('uuid').v4(),
+      timestamp: new Date(),
+      type: 'Test Threat Alert',
+      severity: 'Medium',
+      source: '192.168.1.100',
+      destination: '8.8.8.8',
+      sourcePort: 12345,
+      destinationPort: 80,
+      protocol: 'tcp',
+      packetSize: 1024,
+      description: 'This is a test threat alert to verify the email system is working correctly.',
+      classification: 'Test',
+      confidence: 0.85,
+      networkInterface: 'eth0',
+      location: 'Test Environment'
+    };
+    
+    const result = await emailService.sendThreatAlert(mockThreat);
+    res.json({ success: result, message: result ? 'Test threat alert sent' : 'Failed to send test alert' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Socket.io connection handling
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
@@ -425,6 +543,28 @@ async function initializeSystem() {
     const modelsDir = path.join(__dirname, 'models');
     if (!fs.existsSync(modelsDir)) {
       fs.mkdirSync(modelsDir, { recursive: true });
+    }
+    
+    // Create default admin user if none exists
+    const adminCount = await User.countDocuments({ role: 'admin' });
+    if (adminCount === 0) {
+      const defaultAdmin = new User({
+        id: require('uuid').v4(),
+        email: process.env.DEFAULT_ADMIN_EMAIL || 'admin@hospital.com',
+        name: 'System Administrator',
+        role: 'admin',
+        alertPreferences: {
+          emailEnabled: true,
+          severityLevels: ['Critical', 'High', 'Medium', 'Low'],
+          threatTypes: ['Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force'],
+          immediateAlert: true,
+          dailySummary: true,
+          weeklySummary: false
+        }
+      });
+      
+      await defaultAdmin.save();
+      console.log('Created default admin user:', defaultAdmin.email);
     }
     
     // Initialize threat detector
@@ -450,6 +590,7 @@ async function initializeSystem() {
 process.on('SIGINT', () => {
   console.log('Shutting down gracefully...');
   networkMonitor.stop();
+  emailService.close();
   mongoose.connection.close();
   process.exit(0);
 });
