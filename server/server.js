@@ -402,9 +402,15 @@ app.get('/api/system/status', async (req, res) => {
     // Update threat counts from database
     const totalThreats = await Threat.countAll();
     const activeIncidents = await Threat.countByStatus('active');
+    const trainingDataCount = await TrainingData.countAll();
+    
+    // Get model information
+    const modelInfo = threatDetector.getModelInfo();
     
     systemStatus.threatsDetected = totalThreats;
     systemStatus.activeIncidents = activeIncidents;
+    systemStatus.modelInfo = modelInfo;
+    systemStatus.trainingDataCount = trainingDataCount;
     
     res.json(systemStatus);
   } catch (error) {

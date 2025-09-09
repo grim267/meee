@@ -14,9 +14,17 @@ class ThreatDetector extends EventEmitter {
     this.featureScaler = null;
     this.labelEncoder = new Map();
     this.threatThreshold = parseFloat(process.env.THREAT_THRESHOLD) || 0.7;
+    this.modelMetadata = null;
+    this.trainingHistory = [];
+    this.modelVersion = 1;
+    this.lastTrainingDate = null;
+    this.totalSamplesTrained = 0;
     
     // Initialize label encoder with known threat types
     this.initializeLabelEncoder();
+    
+    // Load existing model and metadata on startup
+    this.initializeModel();
   }
 
   initializeLabelEncoder() {
@@ -27,17 +35,118 @@ class ThreatDetector extends EventEmitter {
     });
   }
 
+  async initializeModel() {
+    try {
+      // Try to load existing model
+      const modelLoaded = await this.loadModel();
+      if (modelLoaded) {
+        console.log('✅ Existing model loaded successfully');
+        await this.loadModelMetadata();
+      } else {
+        console.log('ℹ️ No existing model found - ready for initial training');
+      }
+    } catch (error) {
+      console.error('Error initializing model:', error);
+    }
+  }
   async loadModel() {
     try {
-      this.model = await tf.loadLayersModel('file://./models/threat_model/model.json');
-      console.log('Threat detection model loaded successfully');
+      const modelPath = './server/models/threat_model/model.json';
+      if (!fs.existsSync(modelPath)) {
+        return false;
+      }
+      
+      this.model = await tf.loadLayersModel('file://./server/models/threat_model/model.json');
+      
+      // Load feature scaler
+      await this.loadFeatureScaler();
+      
+      console.log('✅ Threat detection model loaded successfully');
       return true;
     } catch (error) {
-      console.log('No existing model found, will need to train first');
+      console.log('ℹ️ No existing model found, will need to train first');
       return false;
     }
   }
 
+  async loadFeatureScaler() {
+    try {
+      const scalerPath = './server/models/threat_model/scaler.json';
+      if (fs.existsSync(scalerPath)) {
+        const scalerData = JSON.parse(fs.readFileSync(scalerPath, 'utf8'));
+        
+        // Recreate tensors from saved data
+        this.featureScaler = {
+          mean: tf.tensor1d(scalerData.mean),
+          std: tf.tensor1d(scalerData.std)
+        };
+        
+        console.log('✅ Feature scaler loaded');
+      }
+    } catch (error) {
+      console.error('Error loading feature scaler:', error);
+    }
+  }
+
+  async saveFeatureScaler() {
+    try {
+      if (!this.featureScaler) return;
+      
+      const scalerData = {
+        mean: await this.featureScaler.mean.data(),
+        std: await this.featureScaler.std.data(),
+        version: this.modelVersion,
+        savedAt: new Date().toISOString()
+      };
+      
+      const scalerPath = './server/models/threat_model/scaler.json';
+      fs.writeFileSync(scalerPath, JSON.stringify(scalerData, null, 2));
+      console.log('✅ Feature scaler saved');
+    } catch (error) {
+      console.error('Error saving feature scaler:', error);
+    }
+  }
+
+  async loadModelMetadata() {
+    try {
+      const metadataPath = './server/models/threat_model/metadata.json';
+      if (fs.existsSync(metadataPath)) {
+        this.modelMetadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
+        this.modelVersion = this.modelMetadata.version || 1;
+        this.lastTrainingDate = this.modelMetadata.lastTrainingDate;
+        this.totalSamplesTrained = this.modelMetadata.totalSamplesTrained || 0;
+        this.trainingHistory = this.modelMetadata.trainingHistory || [];
+        
+        console.log(`✅ Model metadata loaded - Version: ${this.modelVersion}, Samples: ${this.totalSamplesTrained}`);
+      }
+    } catch (error) {
+      console.error('Error loading model metadata:', error);
+    }
+  }
+
+  async saveModelMetadata(trainingResult) {
+    try {
+      this.modelMetadata = {
+        version: this.modelVersion,
+        lastTrainingDate: new Date().toISOString(),
+        totalSamplesTrained: this.totalSamplesTrained,
+        trainingHistory: this.trainingHistory,
+        accuracy: trainingResult.accuracy,
+        epochs: trainingResult.epochs,
+        threatTypes: Array.from(this.labelEncoder.keys()).filter(k => typeof k === 'string'),
+        features: [
+          'packet_size', 'source_port', 'dest_port', 'protocol', 
+          'hour', 'port_category', 'size_category', 'source_ip_type', 'dest_ip_type'
+        ]
+      };
+      
+      const metadataPath = './server/models/threat_model/metadata.json';
+      fs.writeFileSync(metadataPath, JSON.stringify(this.modelMetadata, null, 2));
+      console.log('✅ Model metadata saved');
+    } catch (error) {
+      console.error('Error saving model metadata:', error);
+    }
+  }
   async trainModel(trainingData = null) {
     if (this.isTraining) {
       throw new Error('Model is already training');
@@ -48,6 +157,10 @@ class ThreatDetector extends EventEmitter {
 
     try {
       console.log('ThreatDetector: Starting training process');
+      
+      // Increment version for new training
+      this.modelVersion++;
+      
       let data;
       if (trainingData) {
         console.log('Using provided training data:', trainingData.length, 'samples');
@@ -64,6 +177,9 @@ class ThreatDetector extends EventEmitter {
         data = dbData.map(item => ({
           features: item.processed_features,
           label: item.threat_type
+      // Add to total samples trained
+      this.totalSamplesTrained += data.length;
+
         }));
         console.log('Sample database format:', JSON.stringify(data[0], null, 2));
       }
@@ -87,6 +203,8 @@ class ThreatDetector extends EventEmitter {
       
       // Validate features
       console.log('=== VALIDATION ===');
+      if (!this.model) {
+        console.log('🏗️ Creating new model architecture...');
       const invalidFeatures = features.filter(f => !Array.isArray(f) || f.length !== 9);
       if (invalidFeatures.length > 0) {
         console.error('Invalid features found:', invalidFeatures);
@@ -144,6 +262,9 @@ class ThreatDetector extends EventEmitter {
       console.log('Model created');
       console.log('Model summary:');
       this.model.summary();
+      } else {
+        console.log('🔄 Using existing model for incremental learning...');
+      }
 
       // Compile model
       console.log('Compiling model...');
@@ -212,6 +333,16 @@ class ThreatDetector extends EventEmitter {
         epochs: 30
       };
       
+      // Add to training history
+      this.trainingHistory.push({
+        date: new Date().toISOString(),
+        samples: data.length,
+        accuracy: result.accuracy,
+        version: this.modelVersion
+      });
+      
+      // Save metadata
+      await this.saveModelMetadata(result);
       console.log('Training result:', JSON.stringify(result, null, 2));
       console.log('=== TRAINING DEBUG END ===');
       
@@ -235,6 +366,44 @@ class ThreatDetector extends EventEmitter {
     }
   }
 
+  createModelArchitecture() {
+    const numClasses = this.labelEncoder.size / 2;
+    
+    return tf.sequential({
+      layers: [
+        tf.layers.dense({ inputShape: [9], units: 64, activation: 'relu' }),
+        tf.layers.dropout({ rate: 0.3 }),
+        tf.layers.dense({ units: 32, activation: 'relu' }),
+        tf.layers.dropout({ rate: 0.2 }),
+        tf.layers.dense({ units: numClasses, activation: 'softmax' })
+      ]
+    });
+  }
+
+  async saveModel() {
+    try {
+      const modelDir = './server/models/threat_model';
+      
+      // Ensure directory exists
+      if (!fs.existsSync('./server/models')) {
+        fs.mkdirSync('./server/models', { recursive: true });
+      }
+      if (!fs.existsSync(modelDir)) {
+        fs.mkdirSync(modelDir, { recursive: true });
+      }
+      
+      // Save model
+      await this.model.save('file://./server/models/threat_model');
+      console.log('✅ Model saved successfully');
+      
+      // Save feature scaler
+      await this.saveFeatureScaler();
+      
+    } catch (error) {
+      console.error('❌ Error saving model:', error);
+      throw error;
+    }
+  }
   getLabelDistribution(data) {
     const distribution = {};
     data.forEach(item => {
@@ -265,6 +434,7 @@ class ThreatDetector extends EventEmitter {
 
   async analyzePacket(packet) {
     if (!this.model || !this.featureScaler) {
+      console.log('⚠️ Model or scaler not available for packet analysis');
       return {
         classification: 'Unknown',
         confidence: 0.5,
@@ -302,6 +472,9 @@ class ThreatDetector extends EventEmitter {
       let threat = null;
       if (isThreat) {
         threat = await this.createThreatRecord(packet, classification, confidence, features);
+        
+        // Learn from detected threats (optional: add to training data)
+        await this.learnFromThreat(packet, classification, confidence, features);
       }
 
       return {
@@ -321,6 +494,46 @@ class ThreatDetector extends EventEmitter {
     }
   }
 
+  async learnFromThreat(packet, classification, confidence, features) {
+    try {
+      // Only learn from high-confidence detections
+      if (confidence > 0.9) {
+        console.log(`🧠 Learning from high-confidence ${classification} detection`);
+        
+        // Add to training data for future retraining
+        const trainingData = new TrainingData({
+          source_ip: packet.sourceIP,
+          dest_ip: packet.destinationIP,
+          source_port: packet.sourcePort,
+          dest_port: packet.destinationPort,
+          protocol: packet.protocol?.toUpperCase(),
+          packet_size: packet.packetSize,
+          duration: 0,
+          threat_type: classification,
+          processed_features: features,
+          source: 'live_detection',
+          validated: false
+        });
+        
+        await trainingData.save();
+        console.log('✅ Added threat to training data for future learning');
+      }
+    } catch (error) {
+      console.error('Error learning from threat:', error);
+    }
+  }
+
+  getModelInfo() {
+    return {
+      version: this.modelVersion,
+      lastTrainingDate: this.lastTrainingDate,
+      totalSamplesTrained: this.totalSamplesTrained,
+      trainingHistory: this.trainingHistory,
+      isModelLoaded: !!this.model,
+      isScalerLoaded: !!this.featureScaler,
+      threatTypes: Array.from(this.labelEncoder.keys()).filter(k => typeof k === 'string')
+    };
+  }
   // Extract features from CSV row data
   extractFeaturesFromCSVData(csvRow) {
     console.log('Extracting features from CSV row:', csvRow);
