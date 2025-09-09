@@ -75,10 +75,14 @@ export const api = {
   // User Management
   getUsers: async () => {
     const response = await fetch(`${API_BASE}/users`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
     return response.json();
   },
 
   createUser: async (userData: any) => {
+    console.log('API: Creating user with data:', userData);
     const response = await fetch(`${API_BASE}/users`, {
       method: 'POST',
       headers: {
@@ -86,10 +90,18 @@ export const api = {
       },
       body: JSON.stringify(userData),
     });
-    return response.json();
+    
+    const result = await response.json();
+    console.log('API: User creation response:', result);
+    
+    if (!response.ok) {
+      throw new Error(result.error || `HTTP error! status: ${response.status}`);
+    }
+    return result;
   },
 
   updateUser: async (userId: string, userData: any) => {
+    console.log('API: Updating user:', userId, 'with data:', userData);
     const response = await fetch(`${API_BASE}/users/${userId}`, {
       method: 'PUT',
       headers: {
@@ -97,14 +109,29 @@ export const api = {
       },
       body: JSON.stringify(userData),
     });
-    return response.json();
+    
+    const result = await response.json();
+    console.log('API: User update response:', result);
+    
+    if (!response.ok) {
+      throw new Error(result.error || `HTTP error! status: ${response.status}`);
+    }
+    return result;
   },
 
   deleteUser: async (userId: string) => {
+    console.log('API: Deleting user:', userId);
     const response = await fetch(`${API_BASE}/users/${userId}`, {
       method: 'DELETE',
     });
-    return response.json();
+    
+    const result = await response.json();
+    console.log('API: User deletion response:', result);
+    
+    if (!response.ok) {
+      throw new Error(result.error || `HTTP error! status: ${response.status}`);
+    }
+    return result;
   },
 
   // Email Testing

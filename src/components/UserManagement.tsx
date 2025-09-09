@@ -44,31 +44,58 @@ export const UserManagement: React.FC = () => {
 
   const handleAddUser = async (userData: Partial<User>) => {
     try {
-      await api.createUser(userData);
+      console.log('Adding user:', userData);
+      const result = await api.createUser(userData);
+      console.log('User creation result:', result);
+      
+      if (!result.success) {
+        alert('Failed to create user: ' + (result.error || 'Unknown error'));
+        return;
+      }
+      
       setShowAddUser(false);
       loadUsers();
     } catch (error) {
       console.error('Failed to add user:', error);
+      alert('Failed to add user: ' + error.message);
     }
   };
 
   const handleUpdateUser = async (userId: string, userData: Partial<User>) => {
     try {
-      await api.updateUser(userId, userData);
+      console.log('Updating user:', userId, userData);
+      const result = await api.updateUser(userId, userData);
+      console.log('User update result:', result);
+      
+      if (!result.success) {
+        alert('Failed to update user: ' + (result.error || 'Unknown error'));
+        return;
+      }
+      
       setEditingUser(null);
       loadUsers();
     } catch (error) {
       console.error('Failed to update user:', error);
+      alert('Failed to update user: ' + error.message);
     }
   };
 
   const handleDeleteUser = async (userId: string) => {
     if (confirm('Are you sure you want to delete this user?')) {
       try {
-        await api.deleteUser(userId);
+        console.log('Deleting user:', userId);
+        const result = await api.deleteUser(userId);
+        console.log('User deletion result:', result);
+        
+        if (!result.success) {
+          alert('Failed to delete user: ' + (result.error || 'Unknown error'));
+          return;
+        }
+        
         loadUsers();
       } catch (error) {
         console.error('Failed to delete user:', error);
+        alert('Failed to delete user: ' + error.message);
       }
     }
   };

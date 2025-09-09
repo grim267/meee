@@ -417,12 +417,14 @@ app.get('/api/users', async (req, res) => {
     
     res.json(users);
   } catch (error) {
+    console.error('Error fetching users:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 app.post('/api/users', async (req, res) => {
   try {
+    console.log('Creating user with data:', req.body);
     const { email, name, role, alertPreferences } = req.body;
     
     if (!email || !name) {
@@ -435,22 +437,32 @@ app.post('/api/users', async (req, res) => {
     }
     
     const user = new User({
-      id: require('uuid').v4(),
+      id: uuidv4(),
       email,
       name,
       role: role || 'viewer',
-      alertPreferences: alertPreferences || {}
+      alertPreferences: alertPreferences || {
+        emailEnabled: true,
+        severityLevels: ['Critical', 'High'],
+        threatTypes: ['Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force'],
+        immediateAlert: true,
+        dailySummary: true,
+        weeklySummary: false
+      }
     });
     
-    await user.save();
-    res.json({ success: true, user });
+    const savedUser = await user.save();
+    console.log('User created successfully:', savedUser.id);
+    res.json({ success: true, user: savedUser });
   } catch (error) {
+    console.error('Error creating user:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 app.put('/api/users/:id', async (req, res) => {
   try {
+    console.log('Updating user:', req.params.id, 'with data:', req.body);
     const { name, role, alertPreferences, isActive } = req.body;
     
     const user = await User.findOne({ id: req.params.id });
@@ -464,24 +476,29 @@ app.put('/api/users/:id', async (req, res) => {
     if (typeof isActive === 'boolean') user.isActive = isActive;
     
     user.updatedAt = new Date();
-    await user.save();
+    const updatedUser = await user.save();
+    console.log('User updated successfully:', updatedUser.id);
     
-    res.json({ success: true, user });
+    res.json({ success: true, user: updatedUser });
   } catch (error) {
+    console.error('Error updating user:', error);
     res.status(500).json({ error: error.message });
   }
 });
 
 app.delete('/api/users/:id', async (req, res) => {
   try {
+    console.log('Deleting user:', req.params.id);
     const user = await User.findOne({ id: req.params.id });
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
     
     await User.deleteOne({ id: req.params.id });
+    console.log('User deleted successfully:', req.params.id);
     res.json({ success: true, message: 'User deleted successfully' });
   } catch (error) {
+    console.error('Error deleting user:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -492,6 +509,7 @@ app.post('/api/email/test', async (req, res) => {
     const result = await emailService.testEmailConfiguration();
     res.json(result);
   } catch (error) {
+    console.error('Error testing email:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -500,7 +518,7 @@ app.post('/api/email/send-test-threat', async (req, res) => {
   try {
     // Create a mock threat for testing
     const mockThreat = {
-      id: require('uuid').v4(),
+      id: uuidv4(),
       timestamp: new Date(),
       type: 'Test Threat Alert',
       severity: 'Medium',
@@ -520,6 +538,7 @@ app.post('/api/email/send-test-threat', async (req, res) => {
     const result = await emailService.sendThreatAlert(mockThreat);
     res.json({ success: result, message: result ? 'Test threat alert sent' : 'Failed to send test alert' });
   } catch (error) {
+    console.error('Error sending test threat alert:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -548,8 +567,9 @@ async function initializeSystem() {
     // Create default admin user if none exists
     const adminCount = await User.countDocuments({ role: 'admin' });
     if (adminCount === 0) {
+      console.log('Creating default admin user...');
       const defaultAdmin = new User({
-        id: require('uuid').v4(),
+        id: uuidv4(),
         email: process.env.DEFAULT_ADMIN_EMAIL || 'admin@hospital.com',
         name: 'System Administrator',
         role: 'admin',
@@ -563,8 +583,10 @@ async function initializeSystem() {
         }
       });
       
-      await defaultAdmin.save();
-      console.log('Created default admin user:', defaultAdmin.email);
+      const savedAdmin = await defaultAdmin.save();
+      console.log('Created default admin user:', savedAdmin.email, 'with ID:', savedAdmin.id);
+    } else {
+      console.log('Admin user already exists, skipping creation');
     }
     
     // Initialize threat detector

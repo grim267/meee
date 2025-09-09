@@ -14,12 +14,12 @@ const userSchema = new mongoose.Schema({
     severityLevels: [{ 
       type: String, 
       enum: ['Critical', 'High', 'Medium', 'Low'],
-      default: ['Critical', 'High']
+      default: function() { return ['Critical', 'High']; }
     }],
     threatTypes: [{
       type: String,
       enum: ['Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force'],
-      default: ['Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force']
+      default: function() { return ['Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force']; }
     }],
     immediateAlert: { type: Boolean, default: true },
     dailySummary: { type: Boolean, default: true },
@@ -27,8 +27,6 @@ const userSchema = new mongoose.Schema({
   },
   isActive: { type: Boolean, default: true },
   lastLogin: { type: Date },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
 }, {
   timestamps: true
 });
@@ -36,5 +34,6 @@ const userSchema = new mongoose.Schema({
 userSchema.index({ email: 1 });
 userSchema.index({ role: 1 });
 userSchema.index({ isActive: 1 });
+userSchema.index({ id: 1 });
 
 module.exports = mongoose.model('User', userSchema);
