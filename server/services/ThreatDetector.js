@@ -1,5 +1,7 @@
 const EventEmitter = require('events');
 const tf = require('@tensorflow/tfjs-node');
+const fs = require('fs');
+const path = require('path');
 const { v4: uuidv4 } = require('uuid');
 const Threat = require('../models/Threat');
 const TrainingData = require('../models/TrainingData');
@@ -54,15 +56,16 @@ class ThreatDetector extends EventEmitter {
       } else {
         console.log('Loading training data from database');
         // Load training data from database
-        data = await TrainingData.find({}).lean();
+        const dbData = await TrainingData.findAll();
+        console.log('Loaded from database:', dbData.length, 'samples');
         console.log('Loaded from database:', data.length, 'samples');
         
         // Convert to simple format
-        data = data.map(item => ({
+        data = dbData.map(item => ({
           features: item.features,
           label: item.label
         }));
-        console.log('Sample database format:', data[0]);
+        console.log('Sample database format:', JSON.stringify(data[0], null, 2));
       }
 
       if (data.length < 10) {
@@ -72,18 +75,22 @@ class ThreatDetector extends EventEmitter {
       console.log(`Training model with ${data.length} samples`);
 
       // Prepare features and labels
+      console.log('=== FEATURE EXTRACTION ===');
       const features = data.map(item => item.features);
       const labels = data.map(item => this.labelEncoder.get(item.label) || 0);
       
       console.log('Features shape:', features.length, 'x', features[0]?.length);
-      console.log('Sample features:', features[0]);
-      console.log('Labels:', labels);
+      console.log('Sample features:', JSON.stringify(features[0]));
+      console.log('Sample labels:', labels.slice(0, 5));
+      console.log('Label distribution:', this.getLabelDistribution(data));
       console.log('Sample label mapping:', data[0]?.label, '→', this.labelEncoder.get(data[0]?.label));
       
       // Validate features
+      console.log('=== VALIDATION ===');
       const invalidFeatures = features.filter(f => !Array.isArray(f) || f.length !== 9);
       if (invalidFeatures.length > 0) {
         console.error('Invalid features found:', invalidFeatures);
+        console.error('First invalid feature:', JSON.stringify(invalidFeatures[0]));
         throw new Error(`Invalid features found. Expected 9 features per sample, found samples with different lengths.`);
       }
       
@@ -94,32 +101,49 @@ class ThreatDetector extends EventEmitter {
         throw new Error(`Invalid labels found. Some labels could not be encoded.`);
       }
 
+      // Check for NaN values in features
+      const hasNaN = features.some(f => f.some(val => isNaN(val)));
+      if (hasNaN) {
+        console.error('NaN values found in features');
+        throw new Error('Features contain NaN values');
+      }
       // Normalize features
+      console.log('=== TENSOR CREATION ===');
       console.log('Creating feature tensor...');
       const featureTensor = tf.tensor2d(features);
       console.log('Feature tensor shape:', featureTensor.shape);
+      console.log('Feature tensor dtype:', featureTensor.dtype);
       
       const { normalizedFeatures, scaler } = this.normalizeFeatures(featureTensor);
       this.featureScaler = scaler;
       console.log('Features normalized');
+      console.log('Normalized tensor shape:', normalizedFeatures.shape);
 
       // Convert labels to categorical
       console.log('Creating label tensor...');
+      console.log('Label values before tensor:', labels.slice(0, 5));
       const labelTensor = tf.oneHot(tf.tensor1d(labels, 'int32'), this.labelEncoder.size / 2);
       console.log('Label tensor shape:', labelTensor.shape);
+      console.log('Label tensor dtype:', labelTensor.dtype);
 
       // Create model architecture
+      console.log('=== MODEL CREATION ===');
       console.log('Creating model architecture...');
+      const numClasses = this.labelEncoder.size / 2;
+      console.log('Number of classes:', numClasses);
+      
       this.model = tf.sequential({
         layers: [
           tf.layers.dense({ inputShape: [9], units: 64, activation: 'relu' }),
           tf.layers.dropout({ rate: 0.3 }),
           tf.layers.dense({ units: 32, activation: 'relu' }),
           tf.layers.dropout({ rate: 0.2 }),
-          tf.layers.dense({ units: this.labelEncoder.size / 2, activation: 'softmax' })
+          tf.layers.dense({ units: numClasses, activation: 'softmax' })
         ]
       });
       console.log('Model created');
+      console.log('Model summary:');
+      this.model.summary();
 
       // Compile model
       console.log('Compiling model...');
@@ -131,10 +155,15 @@ class ThreatDetector extends EventEmitter {
       console.log('Model compiled');
 
       // Train model
+      console.log('=== MODEL TRAINING ===');
       console.log('Starting model training...');
+      const batchSize = Math.min(16, Math.max(1, Math.floor(data.length / 4)));
+      console.log('Batch size:', batchSize);
+      console.log('Validation split: 0.2');
+      
       const history = await this.model.fit(normalizedFeatures, labelTensor, {
         epochs: 30,
-        batchSize: Math.min(16, Math.floor(data.length / 4)),
+        batchSize: batchSize,
         validationSplit: 0.2,
         verbose: 1,
         callbacks: {
@@ -154,38 +183,51 @@ class ThreatDetector extends EventEmitter {
       console.log('Training completed');
 
       // Save model
+      console.log('=== MODEL SAVING ===');
       console.log('Saving model...');
       const modelDir = './models/threat_model';
-      if (!fs.existsSync('./models')) {
-        fs.mkdirSync('./models', { recursive: true });
+      const modelsBaseDir = './models';
+      
+      // Ensure directories exist
+      if (!fs.existsSync(modelsBaseDir)) {
+        console.log('Creating models directory...');
+        fs.mkdirSync(modelsBaseDir, { recursive: true });
       }
+      
+      if (!fs.existsSync(modelDir)) {
+        console.log('Creating model directory...');
+        fs.mkdirSync(modelDir, { recursive: true });
+      }
+      
       await this.model.save('file://./models/threat_model');
       console.log('Model saved');
 
       const finalAccuracy = history.history.val_acc[history.history.val_acc.length - 1];
+      console.log('Final validation accuracy:', finalAccuracy);
       
-      this.emit('training_completed', {
+      const result = {
         success: true,
         samplesProcessed: data.length,
         accuracy: (finalAccuracy * 100).toFixed(2),
         epochs: 30
-      });
+      };
+      
+      console.log('Training result:', JSON.stringify(result, null, 2));
+      console.log('=== TRAINING DEBUG END ===');
+      
+      this.emit('training_completed', result);
 
       // Cleanup tensors
       featureTensor.dispose();
       normalizedFeatures.dispose();
       labelTensor.dispose();
 
-      return {
-        success: true,
-        samplesProcessed: data.length,
-        accuracy: (finalAccuracy * 100).toFixed(2),
-        epochs: 30
-      };
+      return result;
 
     } catch (error) {
       console.error('Training failed:', error);
       console.error('Error stack:', error.stack);
+      console.error('Error details:', error);
       this.emit('training_failed', { error: error.message });
       throw error;
     } finally {
@@ -193,10 +235,27 @@ class ThreatDetector extends EventEmitter {
     }
   }
 
+  getLabelDistribution(data) {
+    const distribution = {};
+    data.forEach(item => {
+      distribution[item.label] = (distribution[item.label] || 0) + 1;
+    });
+    return distribution;
+  }
   normalizeFeatures(featureTensor) {
+    console.log('Normalizing features...');
     const mean = featureTensor.mean(0);
     const std = featureTensor.sub(mean).square().mean(0).sqrt();
-    const normalizedFeatures = featureTensor.sub(mean).div(std.add(1e-8));
+    
+    // Add small epsilon to prevent division by zero
+    const epsilon = tf.scalar(1e-8);
+    const normalizedFeatures = featureTensor.sub(mean).div(std.add(epsilon));
+    
+    console.log('Mean shape:', mean.shape);
+    console.log('Std shape:', std.shape);
+    console.log('Normalized shape:', normalizedFeatures.shape);
+    
+    epsilon.dispose();
     
     return {
       normalizedFeatures,

@@ -226,10 +226,12 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
   }
 
   try {
+    console.log('=== TRAINING REQUEST START ===');
     console.log('Starting model training...');
     let trainingData = [];
 
     if (req.file) {
+      console.log('=== FILE PROCESSING ===');
       console.log('Processing uploaded CSV file:', req.file.filename);
       // Process uploaded CSV file
       const csvData = fs.readFileSync(req.file.path, 'utf8');
@@ -252,17 +254,26 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
       const hasFeatureHeaders = expectedFeatureHeaders.every(header => headers.includes(header));
       const hasLabelHeader = headers.includes('label');
       
+      console.log('Has feature headers:', hasFeatureHeaders);
+      console.log('Has label header:', hasLabelHeader);
+      
       if (!hasFeatureHeaders || !hasLabelHeader) {
         console.log('Headers do not match expected format. Expected: features_0 through features_8 and label');
         console.log('Found headers:', headers);
+        return res.status(400).json({ 
+          error: 'Invalid CSV format. Expected headers: features_0, features_1, ..., features_8, label',
+          foundHeaders: headers,
+          expectedHeaders: [...expectedFeatureHeaders, 'label']
+        });
       }
       
+      console.log('=== ROW PROCESSING ===');
       for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
         if (!row.trim()) continue; // Skip empty rows
         
         const values = row.split(',').map(v => v.trim());
-        console.log(`Processing row ${i + 1}:`, values);
+        if (i < 5) console.log(`Processing row ${i + 1}:`, values);
         
         if (values.length === headers.length) {
           let features, label;
@@ -274,8 +285,14 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
               const featureIndex = headers.indexOf(`features_${j}`);
               if (featureIndex !== -1) {
                 const num = parseFloat(values[featureIndex]);
-                features.push(isNaN(num) ? 0 : num);
+                if (isNaN(num)) {
+                  console.warn(`Row ${i + 1}: Invalid number for features_${j}:`, values[featureIndex]);
+                  features.push(0);
+                } else {
+                  features.push(num);
+                }
               } else {
+                console.warn(`Row ${i + 1}: Missing features_${j}, using 0`);
                 features.push(0);
               }
             }
@@ -290,7 +307,7 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
             label = values[values.length - 1];
           }
           
-          console.log(`Row ${i + 1} - Features:`, features, 'Label:', label);
+          if (i < 5) console.log(`Row ${i + 1} - Features:`, features, 'Label:', label);
           
           // Validate features
           if (features.length !== 9) {
@@ -314,7 +331,7 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
             });
             
             await trainingRecord.save();
-            console.log(`Saved training record ${i + 1} to database`);
+            if (i < 5) console.log(`Saved training record ${i + 1} to database`);
           } catch (dbError) {
             console.error(`Error saving training record ${i + 1}:`, dbError);
           }
@@ -334,12 +351,27 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
     }
 
     // Start training
+    console.log('=== STARTING MODEL TRAINING ===');
     console.log('Starting model training with', trainingData.length, 'samples');
+    
+    if (trainingData.length === 0) {
+      console.log('No training data from file, checking database...');
+      const dbCount = await TrainingData.countAll();
+      console.log('Database training samples:', dbCount);
+      if (dbCount < 10) {
+        return res.status(400).json({ 
+          error: `Insufficient training data. Need at least 10 samples, found ${dbCount} in database and ${trainingData.length} from file.` 
+        });
+      }
+    }
+    
     const result = await threatDetector.trainModel(trainingData.length > 0 ? trainingData : null);
     console.log('Training completed:', result);
+    console.log('=== TRAINING REQUEST END ===');
     res.json(result);
 
   } catch (error) {
+    console.error('=== TRAINING REQUEST ERROR ===');
     console.error('Training error:', error);
     console.error('Error stack:', error.stack);
     res.status(500).json({ error: 'Training failed: ' + error.message });
