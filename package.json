@@ -7,7 +7,10 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "check-system": "node server/scripts/check-system.js",
+    "start-backend": "cd server && sudo npm start",
+    "setup": "npm install && cd server && npm install && cd .. && npm run check-system"
   },
   "dependencies": {
     "cors": "^2.8.5",
