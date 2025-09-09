@@ -49,6 +49,7 @@ class ThreatDetector extends EventEmitter {
       let data;
       if (trainingData) {
         console.log('Using provided training data:', trainingData.length, 'samples');
+        console.log('Sample training data format:', trainingData[0]);
         data = trainingData;
       } else {
         console.log('Loading training data from database');
@@ -61,6 +62,7 @@ class ThreatDetector extends EventEmitter {
           features: item.features,
           label: item.label
         }));
+        console.log('Sample database format:', data[0]);
       }
 
       if (data.length < 10) {
@@ -74,17 +76,21 @@ class ThreatDetector extends EventEmitter {
       const labels = data.map(item => this.labelEncoder.get(item.label) || 0);
       
       console.log('Features shape:', features.length, 'x', features[0]?.length);
+      console.log('Sample features:', features[0]);
       console.log('Labels:', labels);
+      console.log('Sample label mapping:', data[0]?.label, '→', this.labelEncoder.get(data[0]?.label));
       
       // Validate features
       const invalidFeatures = features.filter(f => !Array.isArray(f) || f.length !== 9);
       if (invalidFeatures.length > 0) {
+        console.error('Invalid features found:', invalidFeatures);
         throw new Error(`Invalid features found. Expected 9 features per sample, found samples with different lengths.`);
       }
       
       // Validate labels
       const invalidLabels = labels.filter(l => l === undefined || l === null);
       if (invalidLabels.length > 0) {
+        console.error('Invalid labels found. Valid labels are:', Array.from(this.labelEncoder.keys()).filter(k => typeof k === 'string'));
         throw new Error(`Invalid labels found. Some labels could not be encoded.`);
       }
 
