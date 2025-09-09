@@ -6,9 +6,9 @@ const socketIo = require('socket.io');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
-const mongoose = require('mongoose');
 const csvParser = require('csv-parser');
 const { v4: uuidv4 } = require('uuid');
+const supabase = require('./config/supabase');
 
 // Import services and models
 const NetworkMonitor = require('./services/NetworkMonitor');
@@ -32,15 +32,21 @@ const io = socketIo(server, {
 app.use(cors());
 app.use(express.json());
 
-// Connect to MongoDB
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/cybersecurity', {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-}).then(() => {
-  console.log('Connected to MongoDB');
-}).catch(err => {
-  console.error('MongoDB connection error:', err);
-});
+// Test Supabase connection
+async function testSupabaseConnection() {
+  try {
+    const { data, error } = await supabase
+      .from('users')
+      .select('count', { count: 'exact', head: true });
+    
+    if (error) throw error;
+    console.log('Connected to Supabase successfully');
+    return true;
+  } catch (error) {
+    console.error('Supabase connection error:', error);
+    return false;
+  }
+}
 
 // Storage for multer
 const storage = multer.diskStorage({
@@ -180,15 +186,11 @@ app.get('/api/threats', async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const limit = parseInt(req.query.limit) || 50;
-    const skip = (page - 1) * limit;
+    const offset = (page - 1) * limit;
     
-    const threats = await Threat.find({})
-      .sort({ timestamp: -1 })
-      .skip(skip)
-      .limit(limit)
-      .lean();
+    const threats = await Threat.findAll(limit, offset);
     
-    res.json(threats);
+    res.json(threats.map(threat => threat.toAPI()));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -196,12 +198,9 @@ app.get('/api/threats', async (req, res) => {
 
 app.get('/api/alerts', async (req, res) => {
   try {
-    const alerts = await Alert.find({})
-      .sort({ timestamp: -1 })
-      .limit(100)
-      .lean();
+    const alerts = await Alert.findAll(100);
     
-    res.json(alerts);
+    res.json(alerts.map(alert => alert.toAPI()));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -209,16 +208,12 @@ app.get('/api/alerts', async (req, res) => {
 
 app.post('/api/alerts/:id/acknowledge', async (req, res) => {
   try {
-    const alert = await Alert.findOne({ id: req.params.id });
+    const alert = await Alert.findById(req.params.id);
     if (!alert) {
       return res.status(404).json({ error: 'Alert not found' });
     }
     
-    alert.acknowledged = true;
-    alert.acknowledgedAt = new Date();
-    alert.acknowledgedBy = req.body.acknowledgedBy || 'System';
-    
-    await alert.save();
+    await alert.acknowledge(req.body.acknowledgedBy || 'System');
     res.json({ success: true });
   } catch (error) {
     res.status(500).json({ error: error.message });
@@ -304,8 +299,8 @@ app.post('/api/system/stop-scan', (req, res) => {
 app.get('/api/system/status', async (req, res) => {
   try {
     // Update threat counts from database
-    const totalThreats = await Threat.countDocuments({});
-    const activeIncidents = await Threat.countDocuments({ status: 'Active' });
+    const totalThreats = await Threat.countAll();
+    const activeIncidents = await Threat.countByStatus('active');
     
     systemStatus.threatsDetected = totalThreats;
     systemStatus.activeIncidents = activeIncidents;
@@ -375,12 +370,9 @@ app.post('/api/email/test', async (req, res) => {
 
 app.get('/api/training-data', async (req, res) => {
   try {
-    const data = await TrainingData.find({})
-      .sort({ timestamp: -1 })
-      .limit(1000)
-      .lean();
+    const data = await TrainingData.findAll(1000);
     
-    res.json(data);
+    res.json(data.map(item => item.toAPI()));
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -401,7 +393,7 @@ app.post('/api/training-data', async (req, res) => {
     });
     
     await trainingData.save();
-    res.json({ success: true, data: trainingData });
+    res.json({ success: true, data: trainingData.toAPI() });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
@@ -410,12 +402,9 @@ app.post('/api/training-data', async (req, res) => {
 // User management routes
 app.get('/api/users', async (req, res) => {
   try {
-    const users = await User.find({})
-      .select('-__v')
-      .sort({ createdAt: -1 })
-      .lean();
+    const users = await User.findAll();
     
-    res.json(users);
+    res.json(users.map(user => user.toAPI()));
   } catch (error) {
     console.error('Error fetching users:', error);
     res.status(500).json({ error: error.message });
@@ -431,17 +420,16 @@ app.post('/api/users', async (req, res) => {
       return res.status(400).json({ error: 'Email and name are required' });
     }
     
-    const existingUser = await User.findOne({ email });
+    const existingUser = await User.findByEmail(email);
     if (existingUser) {
       return res.status(400).json({ error: 'User with this email already exists' });
     }
     
     const user = new User({
-      id: uuidv4(),
       email,
       name,
       role: role || 'viewer',
-      alertPreferences: alertPreferences || {
+      alert_preferences: alertPreferences || {
         emailEnabled: true,
         severityLevels: ['Critical', 'High'],
         threatTypes: ['Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force'],
@@ -453,7 +441,7 @@ app.post('/api/users', async (req, res) => {
     
     const savedUser = await user.save();
     console.log('User created successfully:', savedUser.id);
-    res.json({ success: true, user: savedUser });
+    res.json({ success: true, user: savedUser.toAPI() });
   } catch (error) {
     console.error('Error creating user:', error);
     res.status(500).json({ error: error.message });
@@ -465,21 +453,21 @@ app.put('/api/users/:id', async (req, res) => {
     console.log('Updating user:', req.params.id, 'with data:', req.body);
     const { name, role, alertPreferences, isActive } = req.body;
     
-    const user = await User.findOne({ id: req.params.id });
+    const user = await User.findById(req.params.id);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
     
-    if (name) user.name = name;
-    if (role) user.role = role;
-    if (alertPreferences) user.alertPreferences = { ...user.alertPreferences, ...alertPreferences };
-    if (typeof isActive === 'boolean') user.isActive = isActive;
+    const updates = {};
+    if (name) updates.name = name;
+    if (role) updates.role = role;
+    if (alertPreferences) updates.alertPreferences = alertPreferences;
+    if (typeof isActive === 'boolean') updates.isActive = isActive;
     
-    user.updatedAt = new Date();
-    const updatedUser = await user.save();
+    const updatedUser = await user.update(updates);
     console.log('User updated successfully:', updatedUser.id);
     
-    res.json({ success: true, user: updatedUser });
+    res.json({ success: true, user: updatedUser.toAPI() });
   } catch (error) {
     console.error('Error updating user:', error);
     res.status(500).json({ error: error.message });
@@ -489,12 +477,12 @@ app.put('/api/users/:id', async (req, res) => {
 app.delete('/api/users/:id', async (req, res) => {
   try {
     console.log('Deleting user:', req.params.id);
-    const user = await User.findOne({ id: req.params.id });
+    const user = await User.findById(req.params.id);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
     }
     
-    await User.deleteOne({ id: req.params.id });
+    await user.delete();
     console.log('User deleted successfully:', req.params.id);
     res.json({ success: true, message: 'User deleted successfully' });
   } catch (error) {
@@ -565,15 +553,14 @@ async function initializeSystem() {
     }
     
     // Create default admin user if none exists
-    const adminCount = await User.countDocuments({ role: 'admin' });
+    const adminCount = await User.countByRole('admin');
     if (adminCount === 0) {
       console.log('Creating default admin user...');
       const defaultAdmin = new User({
-        id: uuidv4(),
         email: process.env.DEFAULT_ADMIN_EMAIL || 'admin@hospital.com',
         name: 'System Administrator',
         role: 'admin',
-        alertPreferences: {
+        alert_preferences: {
           emailEnabled: true,
           severityLevels: ['Critical', 'High', 'Medium', 'Low'],
           threatTypes: ['Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force'],
@@ -590,11 +577,12 @@ async function initializeSystem() {
     }
     
     // Initialize threat detector
+    await testSupabaseConnection();
     await initializeThreatDetector();
     
     // Load initial system status
-    const totalThreats = await Threat.countDocuments({});
-    const activeIncidents = await Threat.countDocuments({ status: 'Active' });
+    const totalThreats = await Threat.countAll();
+    const activeIncidents = await Threat.countByStatus('active');
     
     systemStatus.threatsDetected = totalThreats;
     systemStatus.activeIncidents = activeIncidents;
@@ -613,7 +601,6 @@ process.on('SIGINT', () => {
   console.log('Shutting down gracefully...');
   networkMonitor.stop();
   emailService.close();
-  mongoose.connection.close();
   process.exit(0);
 });
 
