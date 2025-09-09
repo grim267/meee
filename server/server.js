@@ -247,6 +247,16 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
       const dataRows = lines.slice(1);
       console.log('Data rows to process:', dataRows.length);
       
+      // Check if headers match expected format
+      const expectedFeatureHeaders = ['features_0', 'features_1', 'features_2', 'features_3', 'features_4', 'features_5', 'features_6', 'features_7', 'features_8'];
+      const hasFeatureHeaders = expectedFeatureHeaders.every(header => headers.includes(header));
+      const hasLabelHeader = headers.includes('label');
+      
+      if (!hasFeatureHeaders || !hasLabelHeader) {
+        console.log('Headers do not match expected format. Expected: features_0 through features_8 and label');
+        console.log('Found headers:', headers);
+      }
+      
       for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
         if (!row.trim()) continue; // Skip empty rows
@@ -255,11 +265,30 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
         console.log(`Processing row ${i + 1}:`, values);
         
         if (values.length === headers.length) {
-          const features = values.slice(0, -1).map(v => {
-            const num = parseFloat(v);
-            return isNaN(num) ? 0 : num;
-          });
-          const label = values[values.length - 1];
+          let features, label;
+          
+          if (hasFeatureHeaders && hasLabelHeader) {
+            // New format with feature_0, feature_1, etc.
+            features = [];
+            for (let j = 0; j < 9; j++) {
+              const featureIndex = headers.indexOf(`features_${j}`);
+              if (featureIndex !== -1) {
+                const num = parseFloat(values[featureIndex]);
+                features.push(isNaN(num) ? 0 : num);
+              } else {
+                features.push(0);
+              }
+            }
+            const labelIndex = headers.indexOf('label');
+            label = labelIndex !== -1 ? values[labelIndex] : 'Normal';
+          } else {
+            // Legacy format - assume features are first 9 columns, label is last
+            features = values.slice(0, -1).map(v => {
+              const num = parseFloat(v);
+              return isNaN(num) ? 0 : num;
+            });
+            label = values[values.length - 1];
+          }
           
           console.log(`Row ${i + 1} - Features:`, features, 'Label:', label);
           
