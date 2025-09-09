@@ -156,6 +156,7 @@ class ThreatDetector extends EventEmitter {
     this.emit('training_started');
 
     try {
+      console.log('=== TRAINING DEBUG START ===');
       console.log('ThreatDetector: Starting training process');
       
       // Increment version for new training
@@ -164,25 +165,25 @@ class ThreatDetector extends EventEmitter {
       let data;
       if (trainingData) {
         console.log('Using provided training data:', trainingData.length, 'samples');
-        console.log('Sample training data format:', trainingData[0]);
+        console.log('Sample training data format:', JSON.stringify(trainingData[0], null, 2));
         data = trainingData;
       } else {
         console.log('Loading training data from database');
         // Load training data from database
         const dbData = await TrainingData.findAll();
         console.log('Loaded from database:', dbData.length, 'samples');
-        console.log('Loaded from database:', data.length, 'samples');
         
         // Convert to simple format
         data = dbData.map(item => ({
           features: item.processed_features,
           label: item.threat_type
-      // Add to total samples trained
-      this.totalSamplesTrained += data.length;
 
         }));
-        console.log('Sample database format:', JSON.stringify(data[0], null, 2));
+        console.log('Sample database format:', data.length > 0 ? JSON.stringify(data[0], null, 2) : 'No data');
       }
+
+      // Add to total samples trained
+      this.totalSamplesTrained += data.length;
 
       if (data.length < 10) {
         throw new Error(`Insufficient training data. Need at least 10 samples, got ${data.length}.`);
@@ -203,8 +204,6 @@ class ThreatDetector extends EventEmitter {
       
       // Validate features
       console.log('=== VALIDATION ===');
-      if (!this.model) {
-        console.log('🏗️ Creating new model architecture...');
       const invalidFeatures = features.filter(f => !Array.isArray(f) || f.length !== 9);
       if (invalidFeatures.length > 0) {
         console.error('Invalid features found:', invalidFeatures);
@@ -225,6 +224,7 @@ class ThreatDetector extends EventEmitter {
         console.error('NaN values found in features');
         throw new Error('Features contain NaN values');
       }
+      
       // Normalize features
       console.log('=== TENSOR CREATION ===');
       console.log('Creating feature tensor...');
@@ -246,22 +246,23 @@ class ThreatDetector extends EventEmitter {
 
       // Create model architecture
       console.log('=== MODEL CREATION ===');
-      console.log('Creating model architecture...');
-      const numClasses = this.labelEncoder.size / 2;
-      console.log('Number of classes:', numClasses);
-      
-      this.model = tf.sequential({
-        layers: [
-          tf.layers.dense({ inputShape: [9], units: 64, activation: 'relu' }),
-          tf.layers.dropout({ rate: 0.3 }),
-          tf.layers.dense({ units: 32, activation: 'relu' }),
-          tf.layers.dropout({ rate: 0.2 }),
-          tf.layers.dense({ units: numClasses, activation: 'softmax' })
-        ]
-      });
-      console.log('Model created');
-      console.log('Model summary:');
-      this.model.summary();
+      if (!this.model) {
+        console.log('🏗️ Creating new model architecture...');
+        const numClasses = this.labelEncoder.size / 2;
+        console.log('Number of classes:', numClasses);
+        
+        this.model = tf.sequential({
+          layers: [
+            tf.layers.dense({ inputShape: [9], units: 64, activation: 'relu' }),
+            tf.layers.dropout({ rate: 0.3 }),
+            tf.layers.dense({ units: 32, activation: 'relu' }),
+            tf.layers.dropout({ rate: 0.2 }),
+            tf.layers.dense({ units: numClasses, activation: 'softmax' })
+          ]
+        });
+        console.log('Model created');
+        console.log('Model summary:');
+        this.model.summary();
       } else {
         console.log('🔄 Using existing model for incremental learning...');
       }
@@ -306,8 +307,8 @@ class ThreatDetector extends EventEmitter {
       // Save model
       console.log('=== MODEL SAVING ===');
       console.log('Saving model...');
-      const modelDir = './models/threat_model';
-      const modelsBaseDir = './models';
+      const modelDir = './server/models/threat_model';
+      const modelsBaseDir = './server/models';
       
       // Ensure directories exist
       if (!fs.existsSync(modelsBaseDir)) {
@@ -320,8 +321,11 @@ class ThreatDetector extends EventEmitter {
         fs.mkdirSync(modelDir, { recursive: true });
       }
       
-      await this.model.save('file://./models/threat_model');
+      await this.model.save('file://./server/models/threat_model');
       console.log('Model saved');
+
+      // Save feature scaler and metadata
+      await this.saveFeatureScaler();
 
       const finalAccuracy = history.history.val_acc[history.history.val_acc.length - 1];
       console.log('Final validation accuracy:', finalAccuracy);
@@ -358,7 +362,6 @@ class ThreatDetector extends EventEmitter {
     } catch (error) {
       console.error('Training failed:', error);
       console.error('Error stack:', error.stack);
-      console.error('Error details:', error);
       this.emit('training_failed', { error: error.message });
       throw error;
     } finally {

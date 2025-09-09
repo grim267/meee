@@ -275,7 +275,7 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
   }
 
   try {
-    console.log('=== TRAINING REQUEST START ===');
+    console.log('=== SERVER TRAINING REQUEST START ===');
     console.log('Starting model training...');
     let trainingData = [];
 
@@ -315,12 +315,14 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
       }
       
       console.log('=== ROW PROCESSING ===');
+      let validRows = 0;
+      let invalidRows = 0;
+      
       for (let i = 0; i < dataRows.length; i++) {
         const row = dataRows[i];
         if (!row.trim()) continue; // Skip empty rows
         
         const values = row.split(',').map(v => v.trim());
-        if (i < 5) console.log(`Processing row ${i + 1}:`, values);
         
         if (values.length === headers.length) {
           // Parse CSV row into structured data
@@ -328,6 +330,13 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
           headers.forEach((header, index) => {
             csvRow[header] = values[index];
           });
+          
+          // Validate required fields
+          if (!csvRow.source_ip || !csvRow.dest_ip || !csvRow.threat_type) {
+            console.warn(`Row ${i + 1} missing required fields`);
+            invalidRows++;
+            continue;
+          }
           
           // Validate and convert data types
           const processedRow = {
@@ -341,7 +350,13 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
             threat_type: csvRow.threat_type
           };
           
-          if (i < 5) console.log(`Row ${i + 1} processed:`, processedRow);
+          // Validate threat type
+          const validLabels = ['Normal', 'Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force'];
+          if (!validLabels.includes(processedRow.threat_type)) {
+            console.warn(`Row ${i + 1} has invalid threat_type:`, processedRow.threat_type);
+            invalidRows++;
+            continue;
+          }
           
           // Extract ML features from CSV data
           const features = threatDetector.extractFeaturesFromCSVData(processedRow);
@@ -350,19 +365,14 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
           // Validate features
           if (features.length !== 9) {
             console.warn(`Row ${i + 1} has wrong number of features:`, features.length);
+            invalidRows++;
             continue;
           }
           
-          // Validate label
-          const validLabels = ['Normal', 'Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force'];
-          if (!validLabels.includes(label)) {
-            console.warn(`Row ${i + 1} has invalid threat_type:`, label);
-            continue;
-          }
-          
-          // Validate required fields
-          if (!processedRow.source_ip || !processedRow.dest_ip || processedRow.packet_size <= 0) {
-            console.warn(`Row ${i + 1} missing required fields`);
+          // Check for NaN in features
+          if (features.some(f => isNaN(f))) {
+            console.warn(`Row ${i + 1} has NaN features:`, features);
+            invalidRows++;
             continue;
           }
           
@@ -375,18 +385,22 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
             });
             
             await trainingRecord.save();
-            if (i < 5) console.log(`Saved training record ${i + 1} to database`);
+            validRows++;
           } catch (dbError) {
             console.error(`Error saving training record ${i + 1}:`, dbError);
+            invalidRows++;
+            continue;
           }
           
           trainingData.push({ features, label });
         } else {
           console.warn(`Row ${i + 1} has wrong number of columns:`, values.length, 'expected:', headers.length);
+          invalidRows++;
         }
       }
 
-      console.log('Total training samples processed:', trainingData.length);
+      console.log(`Processing complete: ${validRows} valid rows, ${invalidRows} invalid rows`);
+      console.log('Total training samples for ML:', trainingData.length);
       
       // Clean up uploaded file
       fs.unlinkSync(req.file.path);
@@ -411,11 +425,11 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
     
     const result = await threatDetector.trainModel(trainingData.length > 0 ? trainingData : null);
     console.log('Training completed:', result);
-    console.log('=== TRAINING REQUEST END ===');
+    console.log('=== SERVER TRAINING REQUEST END ===');
     res.json(result);
 
   } catch (error) {
-    console.error('=== TRAINING REQUEST ERROR ===');
+    console.error('=== SERVER TRAINING REQUEST ERROR ===');
     console.error('Training error:', error);
     console.error('Error stack:', error.stack);
     res.status(500).json({ error: 'Training failed: ' + error.message });

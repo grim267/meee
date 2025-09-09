@@ -16,7 +16,7 @@ async function debugTraining() {
   // Test CSV parsing
   console.log('\n1. Testing CSV parsing...');
   try {
-    const csvData = fs.readFileSync('./training_data_correct.csv', 'utf8');
+    const csvData = fs.readFileSync('./training_data_network.csv', 'utf8');
     const lines = csvData.split('\n').filter(line => line.trim() !== '');
     console.log('✅ CSV loaded:', lines.length, 'lines');
     
@@ -26,23 +26,10 @@ async function debugTraining() {
     const dataRows = lines.slice(1);
     console.log('✅ Data rows:', dataRows.length);
     
-    // Parse first few rows
-    const trainingData = [];
-    for (let i = 0; i < Math.min(5, dataRows.length); i++) {
-      const values = dataRows[i].split(',').map(v => v.trim());
-      const features = [];
-      for (let j = 0; j < 9; j++) {
-        const featureIndex = headers.indexOf(`features_${j}`);
-        if (featureIndex !== -1) {
-          features.push(parseFloat(values[featureIndex]));
-        }
-      }
-      const labelIndex = headers.indexOf('label');
-      const label = values[labelIndex];
-      
-      trainingData.push({ features, label });
-      console.log(`Row ${i + 1}:`, { features, label });
-    }
+    // Check if it's the new format
+    const expectedHeaders = ['source_ip', 'dest_ip', 'source_port', 'dest_port', 'protocol', 'packet_size', 'duration', 'threat_type'];
+    const hasNewFormat = expectedHeaders.every(header => headers.includes(header));
+    console.log('✅ Has new CSV format:', hasNewFormat);
     
   } catch (error) {
     console.error('❌ CSV parsing failed:', error.message);
