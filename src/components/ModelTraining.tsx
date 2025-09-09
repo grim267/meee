@@ -1,11 +1,37 @@
 import React, { useState } from 'react';
-import { Brain, Upload, CheckCircle, AlertCircle, BarChart } from 'lucide-react';
+import { Brain, Upload, CheckCircle, AlertCircle, BarChart, Play, Database } from 'lucide-react';
 import { api } from '../services/api';
+import { useWebSocket } from '../hooks/useWebSocket';
 
 export const ModelTraining: React.FC = () => {
   const [isTraining, setIsTraining] = useState(false);
   const [trainingResult, setTrainingResult] = useState<any>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [trainingProgress, setTrainingProgress] = useState<any>(null);
+  const { socket } = useWebSocket();
+
+  React.useEffect(() => {
+    if (socket) {
+      socket.on('training_status', (status) => {
+        if (status.status === 'started') {
+          setIsTraining(true);
+          setTrainingProgress(null);
+        } else if (status.status === 'completed') {
+          setIsTraining(false);
+          setTrainingResult(status.result);
+          setTrainingProgress(null);
+        } else if (status.status === 'failed') {
+          setIsTraining(false);
+          setTrainingResult({ success: false, error: status.error.error });
+          setTrainingProgress(null);
+        }
+      });
+
+      socket.on('training_progress', (progress) => {
+        setTrainingProgress(progress);
+      });
+    }
+  }, [socket]);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -18,19 +44,37 @@ export const ModelTraining: React.FC = () => {
   };
 
   const handleTraining = async () => {
-    if (!selectedFile) {
-      alert('Please select a CSV file first');
+    if (!selectedFile && !confirm('Start training with existing data in database?')) {
       return;
     }
 
     setIsTraining(true);
+    setTrainingProgress(null);
     try {
       const result = await api.uploadTrainingData(selectedFile);
-      setTrainingResult(result);
+      if (!result.success) {
+        setTrainingResult(result);
+        setIsTraining(false);
+      }
     } catch (error) {
       console.error('Training failed:', error);
       setTrainingResult({ success: false, error: 'Training failed' });
-    } finally {
+      setIsTraining(false);
+    }
+  };
+
+  const startTrainingWithoutFile = async () => {
+    setIsTraining(true);
+    setTrainingProgress(null);
+    try {
+      const result = await api.trainModel();
+      if (!result.success) {
+        setTrainingResult(result);
+        setIsTraining(false);
+      }
+    } catch (error) {
+      console.error('Training failed:', error);
+      setTrainingResult({ success: false, error: 'Training failed' });
       setIsTraining(false);
     }
   };
@@ -130,14 +174,47 @@ export const ModelTraining: React.FC = () => {
             </div>
 
             {/* Training Button */}
-            <button
-              onClick={handleTraining}
-              disabled={!selectedFile || isTraining}
-              className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg font-medium transition-colors"
-            >
-              <Brain className="w-5 h-5" />
-              <span>{isTraining ? 'Training Model...' : 'Train Model'}</span>
-            </button>
+            <div className="flex space-x-4">
+              <button
+                onClick={handleTraining}
+                disabled={!selectedFile || isTraining}
+                className="flex items-center space-x-2 bg-green-600 hover:bg-green-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg font-medium transition-colors"
+              >
+                <Upload className="w-5 h-5" />
+                <span>{isTraining ? 'Training...' : 'Train with CSV'}</span>
+              </button>
+              
+              <button
+                onClick={startTrainingWithoutFile}
+                disabled={isTraining}
+                className="flex items-center space-x-2 bg-blue-600 hover:bg-blue-700 disabled:bg-gray-600 disabled:cursor-not-allowed text-white px-6 py-3 rounded-lg font-medium transition-colors"
+              >
+                <Database className="w-5 h-5" />
+                <span>{isTraining ? 'Training...' : 'Train with DB Data'}</span>
+              </button>
+            </div>
+
+            {/* Training Progress */}
+            {trainingProgress && (
+              <div className="bg-blue-500/20 border border-blue-500/30 rounded-lg p-4">
+                <div className="flex items-center space-x-2 mb-2">
+                  <Brain className="w-5 h-5 text-blue-400 animate-pulse" />
+                  <h4 className="font-semibold text-blue-400">Training in Progress</h4>
+                </div>
+                <div className="text-sm text-gray-300 space-y-1">
+                  <p>Epoch: {trainingProgress.epoch}/{trainingProgress.totalEpochs}</p>
+                  <p>Loss: {trainingProgress.loss?.toFixed(4)}</p>
+                  <p>Accuracy: {(trainingProgress.accuracy * 100)?.toFixed(2)}%</p>
+                  <p>Validation Accuracy: {(trainingProgress.valAccuracy * 100)?.toFixed(2)}%</p>
+                </div>
+                <div className="w-full bg-gray-700 rounded-full h-2 mt-3">
+                  <div 
+                    className="bg-blue-400 h-2 rounded-full transition-all duration-300" 
+                    style={{ width: `${(trainingProgress.epoch / trainingProgress.totalEpochs) * 100}%` }}
+                  ></div>
+                </div>
+              </div>
+            )}
 
             {/* Training Results */}
             {trainingResult && (
@@ -159,7 +236,7 @@ export const ModelTraining: React.FC = () => {
                   <div className="text-sm text-gray-300 space-y-1">
                     <p>• Samples processed: {trainingResult.samplesProcessed}</p>
                     <p>• Model accuracy: {trainingResult.accuracy}%</p>
-                    <p>• Training time: {trainingResult.trainingTime}s</p>
+                    <p>• Training epochs: {trainingResult.epochs}</p>
                     <p className="text-green-400">Model is now active and learning from new threats!</p>
                   </div>
                 ) : (

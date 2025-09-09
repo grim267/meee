@@ -22,12 +22,26 @@ export const api = {
 
   // Model Training
   uploadTrainingData: async (file: File) => {
-    const formData = new FormData();
-    formData.append('file', file);
-    
+    if (file) {
+      const formData = new FormData();
+      formData.append('file', file);
+      
+      const response = await fetch(`${API_BASE}/model/train`, {
+        method: 'POST',
+        body: formData,
+      });
+      return response.json();
+    } else {
+      const response = await fetch(`${API_BASE}/model/train`, {
+        method: 'POST',
+      });
+      return response.json();
+    }
+  },
+
+  trainModel: async () => {
     const response = await fetch(`${API_BASE}/model/train`, {
       method: 'POST',
-      body: formData,
     });
     return response.json();
   },

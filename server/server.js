@@ -1,3 +1,4 @@
+require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const http = require('http');
@@ -5,13 +6,23 @@ const socketIo = require('socket.io');
 const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
+const mongoose = require('mongoose');
+const csvParser = require('csv-parser');
 const { v4: uuidv4 } = require('uuid');
+
+// Import services and models
+const NetworkMonitor = require('./services/NetworkMonitor');
+const ThreatDetector = require('./services/ThreatDetector');
+const EmailService = require('./services/EmailService');
+const Threat = require('./models/Threat');
+const Alert = require('./models/Alert');
+const TrainingData = require('./models/TrainingData');
 
 const app = express();
 const server = http.createServer(app);
 const io = socketIo(server, {
   cors: {
-    origin: "http://localhost:5173",
+    origin: process.env.NODE_ENV === 'production' ? false : "http://localhost:5173",
     methods: ["GET", "POST"]
   }
 });
@@ -19,6 +30,16 @@ const io = socketIo(server, {
 // Middleware
 app.use(cors());
 app.use(express.json());
+
+// Connect to MongoDB
+mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/cybersecurity', {
+  useNewUrlParser: true,
+  useUnifiedTopology: true
+}).then(() => {
+  console.log('Connected to MongoDB');
+}).catch(err => {
+  console.error('MongoDB connection error:', err);
+});
 
 // Storage for multer
 const storage = multer.diskStorage({
@@ -36,302 +57,405 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage: storage });
 
-// In-memory data storage
-let threats = [];
-let alerts = [];
+// Initialize services
+const networkInterfaces = process.env.NETWORK_INTERFACES ? 
+  process.env.NETWORK_INTERFACES.split(',').map(iface => iface.trim()) : 
+  ['eth0', 'wlan0'];
+
+const networkMonitor = new NetworkMonitor(networkInterfaces);
+const threatDetector = new ThreatDetector();
+const emailService = new EmailService();
+
+// System status
 let systemStatus = {
   isScanning: false,
   threatsDetected: 0,
   systemHealth: 'Good',
   lastUpdate: new Date(),
-  activeIncidents: 0
+  activeIncidents: 0,
+  modelTrained: false,
+  networkInterfaces: networkInterfaces,
+  isTraining: false
 };
 
-// Simple Random Forest implementation
-class SimpleRandomForest {
-  constructor() {
-    this.trees = [];
-    this.features = [];
-    this.labels = [];
-    this.trained = false;
-  }
-
-  train(data) {
-    this.features = data.features;
-    this.labels = data.labels;
+// Initialize threat detector
+async function initializeThreatDetector() {
+  try {
+    const modelLoaded = await threatDetector.loadModel();
+    systemStatus.modelTrained = modelLoaded;
     
-    // Simulate training multiple decision trees
-    this.trees = [];
-    for (let i = 0; i < 10; i++) {
-      this.trees.push(this.createDecisionTree(data.features, data.labels));
+    if (modelLoaded) {
+      console.log('Threat detection model loaded and ready');
+    } else {
+      console.log('No trained model found. Please train the model first.');
     }
+  } catch (error) {
+    console.error('Error initializing threat detector:', error);
+  }
+}
+
+// Event handlers
+networkMonitor.on('packet_captured', async (packet) => {
+  try {
+    const analysis = await threatDetector.analyzePacket(packet);
     
-    this.trained = true;
-    return {
-      success: true,
-      samplesProcessed: data.features.length,
-      accuracy: 94.2,
-      trainingTime: 2.5
-    };
-  }
-
-  createDecisionTree(features, labels) {
-    // Simplified decision tree creation
-    return {
-      threshold: Math.random(),
-      feature: Math.floor(Math.random() * features[0].length)
-    };
-  }
-
-  predict(features) {
-    if (!this.trained) {
-      return { classification: 'Unknown', confidence: 0.5 };
-    }
-
-    // Simulate prediction
-    const threatTypes = ['Malware', 'DDoS', 'Intrusion', 'Phishing', 'Normal'];
-    const randomIndex = Math.floor(Math.random() * threatTypes.length);
-    const confidence = 0.7 + Math.random() * 0.3; // 70-100% confidence
-    
-    return {
-      classification: threatTypes[randomIndex],
-      confidence: confidence
-    };
-  }
-}
-
-const model = new SimpleRandomForest();
-
-// Threat detection simulation
-function generateThreat() {
-  const threatTypes = ['Malware', 'DDoS Attack', 'Unauthorized Access', 'Phishing Attempt', 'Data Exfiltration'];
-  const severities = ['Critical', 'High', 'Medium', 'Low'];
-  const sources = ['192.168.1.45', '10.0.1.23', '172.16.0.8', '203.0.113.5', '198.51.100.12'];
-  const destinations = ['192.168.1.100', '10.0.1.50', '172.16.0.25', '192.168.1.75'];
-  const locations = ['Emergency Room', 'ICU', 'Pharmacy', 'Administration', 'Laboratory'];
-
-  const features = [
-    Math.random() * 1000, // packet_size
-    Math.random() * 100,  // duration
-    Math.floor(Math.random() * 65535), // source_port
-    Math.floor(Math.random() * 65535), // dest_port
-    Math.random() * 10,   // protocol_type
-    Math.random() * 5,    // flags
-    Math.random() * 100   // bytes_sent
-  ];
-
-  const prediction = model.predict(features);
-
-  const threat = {
-    id: uuidv4(),
-    timestamp: new Date(),
-    type: threatTypes[Math.floor(Math.random() * threatTypes.length)],
-    severity: severities[Math.floor(Math.random() * severities.length)],
-    source: sources[Math.floor(Math.random() * sources.length)],
-    destination: destinations[Math.floor(Math.random() * destinations.length)],
-    description: `Suspicious ${prediction.classification.toLowerCase()} activity detected on hospital network`,
-    classification: prediction.classification,
-    confidence: prediction.confidence,
-    status: 'Active',
-    location: locations[Math.floor(Math.random() * locations.length)]
-  };
-
-  return threat;
-}
-
-// Network metrics generation
-function generateNetworkMetrics() {
-  return {
-    timestamp: new Date(),
-    inboundTraffic: Math.floor(Math.random() * 1000) + 500,
-    outboundTraffic: Math.floor(Math.random() * 800) + 300,
-    suspiciousConnections: Math.floor(Math.random() * 20),
-    blockedAttempts: Math.floor(Math.random() * 15)
-  };
-}
-
-// Scanning interval
-let scanningInterval = null;
-
-function startScanning() {
-  if (scanningInterval) return;
-  
-  systemStatus.isScanning = true;
-  systemStatus.lastUpdate = new Date();
-  
-  scanningInterval = setInterval(() => {
-    if (Math.random() < 0.3) { // 30% chance of detecting a threat
-      const threat = generateThreat();
-      threats.unshift(threat);
-      
-      // Keep only last 1000 threats
-      if (threats.length > 1000) {
-        threats = threats.slice(0, 1000);
-      }
-      
-      systemStatus.threatsDetected = threats.length;
-      systemStatus.activeIncidents = threats.filter(t => t.status === 'Active').length;
+    if (analysis.isThreat && analysis.threat) {
+      // Update system status
+      systemStatus.threatsDetected++;
+      systemStatus.activeIncidents++;
       systemStatus.lastUpdate = new Date();
       
       // Create alert for high/critical threats
-      if (threat.severity === 'Critical' || threat.severity === 'High') {
-        const alert = {
+      if (analysis.threat.severity === 'Critical' || analysis.threat.severity === 'High') {
+        const alert = new Alert({
           id: uuidv4(),
-          threat: threat,
+          threatId: analysis.threat.id,
+          threat: analysis.threat.toObject(),
           timestamp: new Date(),
           acknowledged: false
-        };
+        });
         
-        alerts.unshift(alert);
+        await alert.save();
+        
+        // Send email alert
+        const emailSent = await emailService.sendThreatAlert(analysis.threat);
+        if (emailSent) {
+          alert.emailSent = true;
+          await alert.save();
+        }
+        
         io.emit('new_alert', alert);
       }
       
-      io.emit('new_threat', threat);
+      io.emit('new_threat', analysis.threat);
       io.emit('system_status', systemStatus);
     }
-  }, 3000); // Check every 3 seconds
-}
-
-function stopScanning() {
-  if (scanningInterval) {
-    clearInterval(scanningInterval);
-    scanningInterval = null;
+  } catch (error) {
+    console.error('Error processing packet:', error);
   }
-  
+});
+
+networkMonitor.on('monitoring_started', () => {
+  systemStatus.isScanning = true;
+  systemStatus.lastUpdate = new Date();
+  io.emit('system_status', systemStatus);
+  console.log('Network monitoring started');
+});
+
+networkMonitor.on('monitoring_stopped', () => {
   systemStatus.isScanning = false;
   systemStatus.lastUpdate = new Date();
   io.emit('system_status', systemStatus);
-}
+  console.log('Network monitoring stopped');
+});
+
+networkMonitor.on('interface_error', (error) => {
+  console.error('Network interface error:', error);
+  io.emit('system_error', error);
+});
+
+threatDetector.on('training_started', () => {
+  systemStatus.isTraining = true;
+  io.emit('training_status', { status: 'started' });
+});
+
+threatDetector.on('training_progress', (progress) => {
+  io.emit('training_progress', progress);
+});
+
+threatDetector.on('training_completed', (result) => {
+  systemStatus.isTraining = false;
+  systemStatus.modelTrained = true;
+  io.emit('training_status', { status: 'completed', result });
+});
+
+threatDetector.on('training_failed', (error) => {
+  systemStatus.isTraining = false;
+  io.emit('training_status', { status: 'failed', error });
+});
 
 // Routes
-app.get('/api/threats', (req, res) => {
-  res.json(threats);
-});
-
-app.get('/api/alerts', (req, res) => {
-  res.json(alerts);
-});
-
-app.post('/api/alerts/:id/acknowledge', (req, res) => {
-  const alertIndex = alerts.findIndex(alert => alert.id === req.params.id);
-  if (alertIndex !== -1) {
-    alerts[alertIndex].acknowledged = true;
-    res.json({ success: true });
-  } else {
-    res.status(404).json({ error: 'Alert not found' });
+app.get('/api/threats', async (req, res) => {
+  try {
+    const page = parseInt(req.query.page) || 1;
+    const limit = parseInt(req.query.limit) || 50;
+    const skip = (page - 1) * limit;
+    
+    const threats = await Threat.find({})
+      .sort({ timestamp: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
+    
+    res.json(threats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
 });
 
-app.post('/api/model/train', upload.single('file'), (req, res) => {
-  if (!req.file) {
-    return res.status(400).json({ error: 'No file uploaded' });
+app.get('/api/alerts', async (req, res) => {
+  try {
+    const alerts = await Alert.find({})
+      .sort({ timestamp: -1 })
+      .limit(100)
+      .lean();
+    
+    res.json(alerts);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/alerts/:id/acknowledge', async (req, res) => {
+  try {
+    const alert = await Alert.findOne({ id: req.params.id });
+    if (!alert) {
+      return res.status(404).json({ error: 'Alert not found' });
+    }
+    
+    alert.acknowledged = true;
+    alert.acknowledgedAt = new Date();
+    alert.acknowledgedBy = req.body.acknowledgedBy || 'System';
+    
+    await alert.save();
+    res.json({ success: true });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/model/train', upload.single('file'), async (req, res) => {
+  if (systemStatus.isTraining) {
+    return res.status(400).json({ error: 'Model is already training' });
   }
 
   try {
-    const csvData = fs.readFileSync(req.file.path, 'utf8');
-    const lines = csvData.split('\n').filter(line => line.trim() !== '');
-    
-    if (lines.length < 2) {
-      return res.status(400).json({ error: 'CSV file must contain header and at least one data row' });
-    }
+    let trainingData = [];
 
-    const headers = lines[0].split(',').map(h => h.trim());
-    const dataRows = lines.slice(1);
-    
-    const features = [];
-    const labels = [];
-    
-    dataRows.forEach(row => {
-      const values = row.split(',').map(v => v.trim());
-      if (values.length === headers.length) {
-        // Extract features (all columns except last one which is the label)
-        const feature = values.slice(0, -1).map(v => parseFloat(v) || 0);
-        const label = values[values.length - 1];
-        
-        features.push(feature);
-        labels.push(label);
+    if (req.file) {
+      // Process uploaded CSV file
+      const csvData = fs.readFileSync(req.file.path, 'utf8');
+      const lines = csvData.split('\n').filter(line => line.trim() !== '');
+      
+      if (lines.length < 2) {
+        return res.status(400).json({ error: 'CSV file must contain header and at least one data row' });
       }
-    });
 
-    if (features.length === 0) {
-      return res.status(400).json({ error: 'No valid data rows found' });
+      const headers = lines[0].split(',').map(h => h.trim());
+      const dataRows = lines.slice(1);
+      
+      for (const row of dataRows) {
+        const values = row.split(',').map(v => v.trim());
+        if (values.length === headers.length) {
+          const features = values.slice(0, -1).map(v => parseFloat(v) || 0);
+          const label = values[values.length - 1];
+          
+          // Save to database
+          const trainingRecord = new TrainingData({
+            features,
+            label,
+            source: 'csv'
+          });
+          
+          await trainingRecord.save();
+          trainingData.push({ features, label });
+        }
+      }
+
+      // Clean up uploaded file
+      fs.unlinkSync(req.file.path);
     }
 
-    const result = model.train({ features, labels });
-    
-    // Clean up uploaded file
-    fs.unlinkSync(req.file.path);
-    
+    // Start training
+    const result = await threatDetector.trainModel(trainingData.length > 0 ? trainingData : null);
     res.json(result);
+
   } catch (error) {
     console.error('Training error:', error);
     res.status(500).json({ error: 'Training failed: ' + error.message });
   }
 });
 
-app.post('/api/system/start-scan', (req, res) => {
-  startScanning();
-  res.json({ success: true, message: 'Scanning started' });
+app.post('/api/system/start-scan', async (req, res) => {
+  try {
+    if (!systemStatus.modelTrained) {
+      return res.status(400).json({ 
+        error: 'Cannot start scanning without a trained model. Please train the model first.' 
+      });
+    }
+    
+    networkMonitor.start();
+    res.json({ success: true, message: 'Network scanning started' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.post('/api/system/stop-scan', (req, res) => {
-  stopScanning();
-  res.json({ success: true, message: 'Scanning stopped' });
+  try {
+    networkMonitor.stop();
+    res.json({ success: true, message: 'Network scanning stopped' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-app.get('/api/system/status', (req, res) => {
-  res.json(systemStatus);
+app.get('/api/system/status', async (req, res) => {
+  try {
+    // Update threat counts from database
+    const totalThreats = await Threat.countDocuments({});
+    const activeIncidents = await Threat.countDocuments({ status: 'Active' });
+    
+    systemStatus.threatsDetected = totalThreats;
+    systemStatus.activeIncidents = activeIncidents;
+    
+    res.json(systemStatus);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.get('/api/metrics/network', (req, res) => {
-  // Generate mock network metrics for the last 30 minutes
-  const metrics = [];
-  const now = new Date();
-  
-  for (let i = 30; i >= 0; i--) {
-    const timestamp = new Date(now.getTime() - i * 60000);
-    metrics.push(generateNetworkMetrics());
+  try {
+    const stats = networkMonitor.getPacketStats();
+    const recentPackets = networkMonitor.getRecentPackets(30);
+    
+    // Generate metrics from real packet data
+    const metrics = [];
+    const now = new Date();
+    
+    for (let i = 30; i >= 0; i--) {
+      const timestamp = new Date(now.getTime() - i * 60000);
+      const packetsInMinute = recentPackets.filter(p => 
+        new Date(p.timestamp).getTime() > timestamp.getTime() - 60000 &&
+        new Date(p.timestamp).getTime() <= timestamp.getTime()
+      );
+      
+      const inboundTraffic = packetsInMinute
+        .filter(p => p.destinationIP.startsWith('192.168.') || p.destinationIP.startsWith('10.'))
+        .reduce((sum, p) => sum + (p.packetSize || 0), 0);
+      
+      const outboundTraffic = packetsInMinute
+        .filter(p => p.sourceIP.startsWith('192.168.') || p.sourceIP.startsWith('10.'))
+        .reduce((sum, p) => sum + (p.packetSize || 0), 0);
+      
+      metrics.push({
+        timestamp,
+        inboundTraffic: Math.floor(inboundTraffic / 1024), // Convert to KB
+        outboundTraffic: Math.floor(outboundTraffic / 1024),
+        suspiciousConnections: Math.floor(Math.random() * 5), // Placeholder
+        blockedAttempts: Math.floor(Math.random() * 3)
+      });
+    }
+    
+    res.json(metrics);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
   }
-  
-  res.json(metrics);
+});
+
+app.get('/api/network/stats', (req, res) => {
+  try {
+    const stats = networkMonitor.getPacketStats();
+    res.json(stats);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/email/test', async (req, res) => {
+  try {
+    const result = await emailService.testEmailConfiguration();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.get('/api/training-data', async (req, res) => {
+  try {
+    const data = await TrainingData.find({})
+      .sort({ timestamp: -1 })
+      .limit(1000)
+      .lean();
+    
+    res.json(data);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/training-data', async (req, res) => {
+  try {
+    const { features, label } = req.body;
+    
+    if (!features || !label || !Array.isArray(features)) {
+      return res.status(400).json({ error: 'Invalid training data format' });
+    }
+    
+    const trainingData = new TrainingData({
+      features,
+      label,
+      source: 'manual'
+    });
+    
+    await trainingData.save();
+    res.json({ success: true, data: trainingData });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Socket.io connection handling
 io.on('connection', (socket) => {
   console.log('Client connected:', socket.id);
   
+  // Send current system status
+  socket.emit('system_status', systemStatus);
+  
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
   });
 });
 
-// Initialize with some sample data
-function initializeData() {
-  // Generate initial threats
-  for (let i = 0; i < 10; i++) {
-    const threat = generateThreat();
-    threat.timestamp = new Date(Date.now() - Math.random() * 3600000); // Random time in last hour
-    threats.push(threat);
+// Initialize system
+async function initializeSystem() {
+  try {
+    // Create models directory if it doesn't exist
+    const modelsDir = path.join(__dirname, 'models');
+    if (!fs.existsSync(modelsDir)) {
+      fs.mkdirSync(modelsDir, { recursive: true });
+    }
+    
+    // Initialize threat detector
+    await initializeThreatDetector();
+    
+    // Load initial system status
+    const totalThreats = await Threat.countDocuments({});
+    const activeIncidents = await Threat.countDocuments({ status: 'Active' });
+    
+    systemStatus.threatsDetected = totalThreats;
+    systemStatus.activeIncidents = activeIncidents;
+    
+    console.log('System initialized successfully');
+    console.log(`Network interfaces configured: ${networkInterfaces.join(', ')}`);
+    console.log(`Email alerts configured: ${emailService.isConfigured ? 'Yes' : 'No'}`);
+    
+  } catch (error) {
+    console.error('Error initializing system:', error);
   }
-  
-  // Generate initial alerts
-  const criticalThreats = threats.filter(t => t.severity === 'Critical' || t.severity === 'High');
-  criticalThreats.slice(0, 3).forEach(threat => {
-    alerts.push({
-      id: uuidv4(),
-      threat: threat,
-      timestamp: new Date(threat.timestamp.getTime() + Math.random() * 300000),
-      acknowledged: Math.random() < 0.3 // 30% chance of being acknowledged
-    });
-  });
-  
-  systemStatus.threatsDetected = threats.length;
-  systemStatus.activeIncidents = threats.filter(t => t.status === 'Active').length;
 }
 
-initializeData();
+// Graceful shutdown
+process.on('SIGINT', () => {
+  console.log('Shutting down gracefully...');
+  networkMonitor.stop();
+  mongoose.connection.close();
+  process.exit(0);
+});
 
 const PORT = process.env.PORT || 3001;
 server.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  initializeSystem();
 });
