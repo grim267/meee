@@ -109,6 +109,27 @@ class ThreatDetector extends EventEmitter {
 
   async loadModelMetadata() {
     try {
+      // First try to load from database
+      const supabase = require('../config/supabase');
+      const { data: modelData, error } = await supabase
+        .from('model_metadata')
+        .select('*')
+        .eq('is_active', true)
+        .order('version', { ascending: false })
+        .limit(1)
+        .single();
+      
+      if (!error && modelData) {
+        this.modelVersion = modelData.version;
+        this.lastTrainingDate = modelData.training_date;
+        this.totalSamplesTrained = modelData.samples_trained;
+        this.trainingHistory = modelData.training_history || [];
+        
+        console.log(`✅ Model metadata loaded from database - Version: ${this.modelVersion}, Samples: ${this.totalSamplesTrained}`);
+        return;
+      }
+      
+      // Fallback to file system
       const metadataPath = './server/models/threat_model/metadata.json';
       if (fs.existsSync(metadataPath)) {
         this.modelMetadata = JSON.parse(fs.readFileSync(metadataPath, 'utf8'));
@@ -126,6 +147,34 @@ class ThreatDetector extends EventEmitter {
 
   async saveModelMetadata(trainingResult) {
     try {
+      // Save to database for persistent memory
+      const supabase = require('../config/supabase');
+      
+      // Insert new model metadata record
+      const { data: modelData, error: modelError } = await supabase
+        .from('model_metadata')
+        .insert({
+          version: this.modelVersion,
+          samples_trained: this.totalSamplesTrained,
+          accuracy: parseFloat(trainingResult.accuracy),
+          epochs: trainingResult.epochs || 30,
+          model_path: 'server/models/threat_model',
+          training_history: this.trainingHistory,
+          scaler_data: this.featureScaler ? {
+            mean: await this.featureScaler.mean.data(),
+            std: await this.featureScaler.std.data()
+          } : null
+        })
+        .select()
+        .single();
+      
+      if (modelError) {
+        console.error('Error saving model metadata to database:', modelError);
+      } else {
+        console.log('✅ Model metadata saved to database');
+      }
+      
+      // Also save to file system
       this.modelMetadata = {
         version: this.modelVersion,
         lastTrainingDate: new Date().toISOString(),
@@ -519,6 +568,22 @@ class ThreatDetector extends EventEmitter {
         });
         
         await trainingData.save();
+        
+        // Record learning session
+        const supabase = require('../config/supabase');
+        await supabase.from('learning_sessions').insert({
+          session_type: 'live_detection',
+          samples_added: 1,
+          model_version: this.modelVersion,
+          training_source: 'real_time_detection',
+          session_data: {
+            threat_type: classification,
+            confidence: confidence,
+            source_ip: packet.sourceIP,
+            dest_ip: packet.destinationIP
+          }
+        });
+        
         console.log('✅ Added threat to training data for future learning');
       }
     } catch (error) {

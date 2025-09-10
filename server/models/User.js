@@ -39,7 +39,10 @@ class User {
       is_active: this.is_active,
       last_login: this.last_login,
       failed_login_attempts: this.failed_login_attempts,
-      account_locked_until: this.account_locked_until
+      account_locked_until: this.account_locked_until,
+      alert_preferences: typeof this.alert_preferences === 'string' 
+        ? this.alert_preferences 
+        : JSON.stringify(this.alert_preferences)
     };
   }
 

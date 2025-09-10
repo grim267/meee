@@ -278,8 +278,11 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
     console.log('=== SERVER TRAINING REQUEST START ===');
     console.log('Starting model training...');
     let trainingData = [];
+    let sessionType = 'manual_training';
+    let samplesAdded = 0;
 
     if (req.file) {
+      sessionType = 'csv_upload';
       console.log('=== FILE PROCESSING ===');
       console.log('Processing uploaded CSV file:', req.file.filename);
       // Process uploaded CSV file
@@ -386,6 +389,7 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
             
             await trainingRecord.save();
             validRows++;
+            samplesAdded++;
           } catch (dbError) {
             console.error(`Error saving training record ${i + 1}:`, dbError);
             invalidRows++;
@@ -406,6 +410,7 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
       fs.unlinkSync(req.file.path);
     } else {
       console.log('No file uploaded, using existing database data');
+      sessionType = 'incremental';
     }
 
     // Start training
@@ -421,9 +426,34 @@ app.post('/api/model/train', upload.single('file'), async (req, res) => {
           error: `Insufficient training data. Need at least 10 samples, found ${dbCount} in database and ${trainingData.length} from file.` 
         });
       }
+      samplesAdded = dbCount;
     }
     
     const result = await threatDetector.trainModel(trainingData.length > 0 ? trainingData : null);
+    
+    // Record learning session
+    try {
+      const { data: sessionData, error: sessionError } = await supabase
+        .from('learning_sessions')
+        .insert({
+          session_type: sessionType,
+          samples_added: samplesAdded,
+          model_version: threatDetector.modelVersion,
+          accuracy_after: parseFloat(result.accuracy),
+          training_source: req.file ? req.file.filename : 'database',
+          session_data: {
+            epochs: result.epochs,
+            samples_processed: result.samplesProcessed
+          }
+        });
+      
+      if (!sessionError) {
+        console.log('✅ Learning session recorded');
+      }
+    } catch (sessionErr) {
+      console.error('Error recording learning session:', sessionErr);
+    }
+    
     console.log('Training completed:', result);
     console.log('=== SERVER TRAINING REQUEST END ===');
     res.json(result);
@@ -606,20 +636,25 @@ app.post('/api/users', async (req, res) => {
     
     const dbRole = roleMapping[role] || 'security_viewer';
     
+    // Ensure alert preferences are properly formatted
+    const defaultAlertPreferences = {
+      emailEnabled: true,
+      severityLevels: ['Critical', 'High'],
+      threatTypes: ['Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force'],
+      immediateAlert: true,
+      dailySummary: true,
+      weeklySummary: false
+    };
+    
+    const finalAlertPreferences = { ...defaultAlertPreferences, ...(alertPreferences || {}) };
+    
     const user = new User({
       email,
       full_name: name,
       username: email,
       role: dbRole,
       is_active: isActive !== undefined ? isActive : true,
-      alert_preferences: JSON.stringify(alertPreferences || {
-        emailEnabled: true,
-        severityLevels: ['Critical', 'High'],
-        threatTypes: ['Malware', 'DDoS', 'Intrusion', 'Phishing', 'Port_Scan', 'Brute_Force'],
-        immediateAlert: true,
-        dailySummary: true,
-        weeklySummary: false
-      })
+      alert_preferences: finalAlertPreferences
     });
     
     console.log('User object created:', user.toDatabase());

@@ -140,6 +140,36 @@ export const SystemControls: React.FC<SystemControlsProps> = ({ systemStatus, on
 
             {/* Configuration */}
             <div className="border-t border-gray-700 pt-6">
+              <h4 className="font-medium text-white mb-4">Model Learning Status</h4>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+                <div className="bg-gray-700 rounded-lg p-4">
+                  <div className="flex items-center space-x-2 mb-2">
+                    <Brain className="w-5 h-5 text-blue-400" />
+                    <h5 className="font-medium text-white">Model Version</h5>
+                  </div>
+                  <p className="text-2xl font-bold text-blue-400">{systemStatus.modelInfo?.version || 1}</p>
+                  <p className="text-sm text-gray-400">Current version</p>
+                </div>
+                
+                <div className="bg-gray-700 rounded-lg p-4">
+                  <div className="flex items-center space-x-2 mb-2">
+                    <Activity className="w-5 h-5 text-green-400" />
+                    <h5 className="font-medium text-white">Samples Learned</h5>
+                  </div>
+                  <p className="text-2xl font-bold text-green-400">{systemStatus.modelInfo?.totalSamplesTrained || 0}</p>
+                  <p className="text-sm text-gray-400">Total training data</p>
+                </div>
+                
+                <div className="bg-gray-700 rounded-lg p-4">
+                  <div className="flex items-center space-x-2 mb-2">
+                    <RefreshCw className="w-5 h-5 text-purple-400" />
+                    <h5 className="font-medium text-white">Available Data</h5>
+                  </div>
+                  <p className="text-2xl font-bold text-purple-400">{systemStatus.trainingDataCount || 0}</p>
+                  <p className="text-sm text-gray-400">Ready for training</p>
+                </div>
+              </div>
+              
               <h4 className="font-medium text-white mb-4">Scanning Configuration</h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <div>
