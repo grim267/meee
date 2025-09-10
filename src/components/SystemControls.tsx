@@ -163,10 +163,10 @@ export const SystemControls: React.FC<SystemControlsProps> = ({ systemStatus, on
                 <div className="bg-gray-700 rounded-lg p-4">
                   <div className="flex items-center space-x-2 mb-2">
                     <RefreshCw className="w-5 h-5 text-purple-400" />
-                    <h5 className="font-medium text-white">Available Data</h5>
+                    <h5 className="font-medium text-white">Model Type</h5>
                   </div>
-                  <p className="text-2xl font-bold text-purple-400">{systemStatus.trainingDataCount || 0}</p>
-                  <p className="text-sm text-gray-400">Ready for training</p>
+                  <p className="text-xl font-bold text-purple-400">Simple ML</p>
+                  <p className="text-sm text-gray-400">Rule-based learning</p>
                 </div>
               </div>
               
@@ -259,7 +259,7 @@ export const SystemControls: React.FC<SystemControlsProps> = ({ systemStatus, on
               </div>
               <div className="flex justify-between">
                 <span className="text-gray-400">Model Version:</span>
-                <span className="text-white">RandomForest v1.3</span>
+                <span className="text-white">Simple ML v{systemStatus.modelInfo?.version || 1}</span>
               </div>
             </div>
             
