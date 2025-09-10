@@ -794,8 +794,8 @@ async function initializeSystem() {
       console.log('Creating default admin user...');
       const defaultAdmin = new User({
         email: process.env.DEFAULT_ADMIN_EMAIL || 'admin@hospital.com',
-        name: 'System Administrator',
-        role: 'admin',
+        full_name: 'System Administrator',
+        role: 'security_admin',
         alert_preferences: {
           emailEnabled: true,
           severityLevels: ['Critical', 'High', 'Medium', 'Low'],

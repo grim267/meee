@@ -7,8 +7,8 @@ class User {
     this.email = data.email || '';
     this.full_name = data.full_name || data.name || '';
     this.username = data.username || data.email || '';
-    this.role = data.role || 'viewer';
-    this.role_level = data.role_level || 4;
+    this.role = this.mapRoleToDatabase(data.role) || 'security_viewer';
+    this.role_level = this.getRoleLevel(data.role) || 4;
     this.password_hash = data.password_hash || '';
     this.alert_preferences = data.alert_preferences || data.alertPreferences || JSON.stringify({
       emailEnabled: true,
@@ -26,6 +26,30 @@ class User {
     this.account_locked_until = data.account_locked_until;
   }
 
+  // Map frontend role to database role
+  mapRoleToDatabase(role) {
+    const roleMapping = {
+      'admin': 'security_admin',
+      'security_analyst': 'security_analyst',
+      'it_manager': 'security_manager',
+      'viewer': 'security_viewer'
+    };
+    return roleMapping[role] || 'security_viewer';
+  }
+
+  // Get role level for database
+  getRoleLevel(role) {
+    const roleLevels = {
+      'admin': 1,
+      'security_admin': 1,
+      'security_analyst': 2,
+      'it_manager': 3,
+      'security_manager': 3,
+      'viewer': 4,
+      'security_viewer': 4
+    };
+    return roleLevels[role] || 4;
+  }
   // Convert to database format
   toDatabase() {
     return {
