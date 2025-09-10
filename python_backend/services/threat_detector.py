@@ -14,6 +14,7 @@ from sklearn.preprocessing import StandardScaler, LabelEncoder
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 import uuid
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -99,7 +100,6 @@ class ThreatDetector:
         """Load model metadata"""
         try:
             if os.path.exists(self.metadata_path):
-                import json
                 with open(self.metadata_path, 'r') as f:
                     metadata = json.load(f)
                 
@@ -115,7 +115,6 @@ class ThreatDetector:
     def save_metadata(self):
         """Save model metadata"""
         try:
-            import json
             metadata = {
                 'version': self.model_version,
                 'lastTrainingDate': self.last_training_date,

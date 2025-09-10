@@ -14,6 +14,7 @@ from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv
 import threading
 import time
+import uuid
 
 # Load environment variables
 load_dotenv()
@@ -33,7 +34,7 @@ logger = setup_logger(__name__)
 app = Flask(__name__)
 app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'cybersecure-hospital-defense-2024')
 CORS(app, origins=["http://localhost:5173"])
-socketio = SocketIO(app, cors_allowed_origins=["http://localhost:5173"])
+socketio = SocketIO(app, cors_allowed_origins=["http://localhost:5173"], async_mode='eventlet')
 
 # Initialize services
 db = Database()
@@ -140,9 +141,12 @@ def train_model():
         
         # Handle file upload
         training_data = None
+        file_name = None
+        
         if 'file' in request.files:
             file = request.files['file']
             if file and file.filename.endswith('.csv'):
+                file_name = file.filename
                 # Process CSV file
                 training_data = threat_detector.process_csv_file(file)
                 logger.info(f"Processed CSV file with {len(training_data)} samples")
@@ -162,8 +166,8 @@ def train_model():
                     session_type='csv_upload' if training_data else 'incremental',
                     samples_added=result.get('samplesProcessed', 0),
                     model_version=result.get('version', 1),
-                    accuracy_after=result.get('accuracy', 0),
-                    training_source=file.filename if 'file' in request.files else 'database'
+                    accuracy_after=float(result.get('accuracy', 0)),
+                    training_source=file_name if file_name else 'database'
                 )
                 
                 socketio.emit('training_status', {'status': 'completed', 'result': result})
