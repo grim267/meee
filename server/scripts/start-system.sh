@@ -20,6 +20,9 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
+# Change to server directory
+cd "$(dirname "$0")/.."
+
 # Check if .env file exists
 if [ ! -f ".env" ]; then
     echo -e "${RED}❌ .env file not found${NC}"
